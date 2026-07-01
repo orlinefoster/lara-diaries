@@ -23,11 +23,12 @@ $script:ProgressSteps = @(
     "Gestion de repos",
     "Disenio y estilo",
     "Mision del equipo",
+    "Backup de config existente",
     "Instalacion",
     "Sincronizacion",
     "Resumen final"
 )
-$script:ProgressTotal = 10
+$script:ProgressTotal = 11
 
 function Set-Progress {
     param([int]$Step, [string]$Status = "...")
@@ -343,6 +344,148 @@ function Save-UserProfile {
     }
 }
 
+# ── BACKUP EXISTING CONFIG ───────────────────
+function Backup-ExistingConfig {
+    param([string]$Mode = "full")
+
+    $configDir = Join-Path $HOME ".config\opencode"
+    $backupDir = Join-Path $PSScriptRoot "..\backups"
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $backupPath = Join-Path $backupDir "opencode-config-$timestamp"
+
+    if (-not (Test-Path -LiteralPath $configDir)) {
+        Write-Info "No hay config existente para backupear."
+        return $null
+    }
+
+    try {
+        $null = New-Item -ItemType Directory -Path $backupPath -Force
+        Write-Info "Backupeando config en: $backupPath"
+
+        # Always backup main config
+        $configFile = Join-Path $configDir "opencode.json"
+        if (Test-Path -LiteralPath $configFile) {
+            Copy-Item -Path $configFile -Destination (Join-Path $backupPath "opencode.json") -Force
+            Write-Success "  opencode.json respaldado"
+        }
+
+        # Always backup AGENTS.md
+        $agentsMd = Join-Path $configDir "AGENTS.md"
+        if (Test-Path -LiteralPath $agentsMd) {
+            Copy-Item -Path $agentsMd -Destination (Join-Path $backupPath "AGENTS.md") -Force
+            Write-Success "  AGENTS.md respaldado"
+        }
+
+        # Backup agents directory
+        $agentsDir = Join-Path $configDir "agents"
+        if (Test-Path -LiteralPath $agentsDir) {
+            $destAgents = Join-Path $backupPath "agents"
+            $null = New-Item -ItemType Directory -Path $destAgents -Force
+            Get-ChildItem -Path $agentsDir -Filter "*.md" | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination (Join-Path $destAgents $_.Name) -Force
+            }
+            Write-Success "  agents/ respaldados"
+        }
+
+        # Full mode: also backup plugins, commands, skills (metadata only)
+        if ($Mode -eq "full") {
+            $pluginsDir = Join-Path $configDir "plugins"
+            if (Test-Path -LiteralPath $pluginsDir) {
+                $destPlugins = Join-Path $backupPath "plugins"
+                $null = New-Item -ItemType Directory -Path $destPlugins -Force
+                Get-ChildItem -Path $pluginsDir -Filter "*.ts" | ForEach-Object {
+                    Copy-Item -Path $_.FullName -Destination (Join-Path $destPlugins $_.Name) -Force
+                }
+                Write-Success "  plugins/ respaldados"
+            }
+
+            $commandsDir = Join-Path $configDir "commands"
+            if (Test-Path -LiteralPath $commandsDir) {
+                $destCommands = Join-Path $backupPath "commands"
+                $null = New-Item -ItemType Directory -Path $destCommands -Force
+                Get-ChildItem -Path $commandsDir -Filter "*.md" | ForEach-Object {
+                    Copy-Item -Path $_.FullName -Destination (Join-Path $destCommands $_.Name) -Force
+                }
+                Write-Success "  commands/ respaldados"
+            }
+
+            $skillsDir = Join-Path $configDir "skills"
+            if (Test-Path -LiteralPath $skillsDir) {
+                $destSkills = Join-Path $backupPath "skills"
+                $null = New-Item -ItemType Directory -Path $destSkills -Force
+                Get-ChildItem -Path $skillsDir -Directory | ForEach-Object {
+                    $skillMeta = Join-Path $_.FullName "SKILL.md"
+                    if (Test-Path -LiteralPath $skillMeta) {
+                        $destSkillDir = Join-Path $destSkills $_.Name
+                        $null = New-Item -ItemType Directory -Path $destSkillDir -Force
+                        Copy-Item -Path $skillMeta -Destination (Join-Path $destSkillDir "SKILL.md") -Force
+                    }
+                }
+                Write-Success "  skills/ metadata respaldada"
+            }
+        }
+
+        Write-Success "Backup completo en: $backupPath"
+        return $backupPath
+    } catch {
+        Write-Warn "Error durante backup: $_"
+        return $null
+    }
+}
+
+# ── SYNC ENGRAM MEMORIES ─────────────────────
+function Sync-EngramMemories {
+    Write-Step "Sincronizando memorias de Engram..."
+
+    $engramCmd = Get-Command "engram" -ErrorAction SilentlyContinue
+    if (-not $engramCmd) {
+        Write-Warn "Engram no esta instalado. No se puede sincronizar."
+        return $false
+    }
+
+    $engramDb = Join-Path $HOME ".engram\engram.db"
+    if (-not (Test-Path -LiteralPath $engramDb)) {
+        Write-Info "No hay datos de Engram para sincronizar."
+        return $false
+    }
+
+    $memoriesRepo = Join-Path $HOME "engram-memories"
+    if (-not (Test-Path -LiteralPath $memoriesRepo)) {
+        Write-Warn "Repo de memorias no encontrado en $memoriesRepo"
+        Write-Info "Crea el repo primero desde el wizard principal."
+        return $false
+    }
+
+    try {
+        Push-Location $memoriesRepo
+        Write-Info "Actualizando repo local..."
+        $null = & git pull --rebase 2>&1
+
+        Write-Info "Exportando memorias..."
+        $exportFile = Join-Path $memoriesRepo "engram-export-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+        $null = & $engramCmd.Source export $exportFile 2>&1
+
+        if (Test-Path -LiteralPath $exportFile) {
+            Write-Success "Exportadas: $exportFile"
+            $null = & git add -A 2>&1
+            $status = & git status --porcelain
+            if ($status) {
+                $null = & git commit -m "sync: memorias $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1
+                $null = & git push 2>&1
+                Write-Success "Memorias sincronizadas a GitHub."
+            } else {
+                Write-Info "Sin cambios nuevos en memorias."
+            }
+        }
+        Pop-Location
+        return $true
+    } catch {
+        Write-Warn "Error en sync de memorias: $_"
+        try { Pop-Location } catch {}
+        return $false
+    }
+}
+
 # ── DRY-RUN / STATUS HELPERS ─────────────────
 $script:IsDryRun = if ($script:IsDryRun -eq $true) { $true } else { $false }
 
@@ -397,7 +540,40 @@ function Install-Component {
     }
 }
 
-# ── 8. INSTALL COMPONENTS ────────────────────
+# ── 8. BACKUP EXISTING CONFIG ────────────────
+function Invoke-BackupPrompt {
+    Write-Step "Paso 8/11 - Backup de config existente"
+    Set-Progress -Step 7 -Status "Verificando config existente..."
+
+    $configDir = Join-Path $HOME ".config\opencode"
+    if (-not (Test-Path -LiteralPath $configDir)) {
+        Write-Info "No hay config existente. Continuamos con instalacion fresh."
+        $script:WizardAnswers.InstallType = "fresh"
+        return
+    }
+
+    Write-Host "  Encontre una configuracion existente en: $configDir" -ForegroundColor Yellow
+    $backupChoice = Read-Host "  Queres backupearla antes de continuar? (S/N, predeterminado: S)"
+    $doBackup = ($backupChoice -eq "" -or $backupChoice -like "S*" -or $backupChoice -like "s*")
+
+    if ($doBackup) {
+        Write-Host "  Que tipo de backup?" -ForegroundColor White
+        Write-Host "     1) Completo (config, plugins, commands, skills metadata)" -ForegroundColor Gray
+        Write-Host "     2) Solo agentes" -ForegroundColor Gray
+        $backupModeChoice = Read-Host "  Opcion (1-2, predeterminado: 1)"
+        $backupMode = if ($backupModeChoice -eq "2") { "agents-only" } else { "full" }
+        $backupPath = Backup-ExistingConfig -Mode $backupMode
+        if ($backupPath) {
+            Write-Success "Config respaldada en: $backupPath"
+        }
+        $script:WizardAnswers.InstallType = "upgrade"
+    } else {
+        Write-Info "Backup omitido. Instalando sobre config existente."
+        $script:WizardAnswers.InstallType = "upgrade"
+    }
+}
+
+# ── 9. INSTALL COMPONENTS ────────────────────
 function Install-Components {
     Write-Step "Paso 8/10 - Instalacion de componentes"
     Set-Progress -Step 7 -Status "Instalando componentes..."
@@ -502,35 +678,40 @@ function Install-Components {
     }
 
     # Create agents from templates
-    Write-Info "Creando agentes Lara-Plan y Lara-VIP..."
-    if (-not (Test-Path -LiteralPath $opencodeAgentsDir)) {
-        $null = New-Item -ItemType Directory -Path $opencodeAgentsDir -Force
-    }
-    $templatesDir = Join-Path $PSScriptRoot "..\templates\agents"
-    try { $templatesDir = (Resolve-Path $templatesDir -ErrorAction Stop).Path } catch {
-        Write-Warn "No se encontro templates/agents"
-    }
-
-    $agentTemplates = @("lara-plan.md", "lara-vip.md")
-    foreach ($agent in $agentTemplates) {
-        $templatePath = Join-Path $templatesDir $agent
-        $outputPath = Join-Path $opencodeAgentsDir $agent
-        if (-not (Test-Path -LiteralPath $templatePath)) {
-            Write-Warn "Template no encontrado: $templatePath"
-            continue
+    $restoreAgents = $script:WizardAnswers.RestoreAgents
+    if ($restoreAgents -eq "keep") {
+        Write-Info "Conservando agentes personalizados existentes (no se actualizan templates)."
+    } else {
+        Write-Info "Creando agentes Lara-Plan y Lara-VIP..."
+        if (-not (Test-Path -LiteralPath $opencodeAgentsDir)) {
+            $null = New-Item -ItemType Directory -Path $opencodeAgentsDir -Force
         }
-        try {
-            $content = Get-Content -Path $templatePath -Raw -Encoding UTF8
-            $content = $content -replace [regex]::Escape("{{PRONOUN}}"), $script:WizardAnswers.Pronoun
-            $content = $content -replace [regex]::Escape("{{SKILL_LEVEL}}"), $script:WizardAnswers.SkillLevel
-            $content = $content -replace [regex]::Escape("{{ASSISTANCE_MODE}}"), $script:WizardAnswers.AssistanceMode
-            $content = $content -replace [regex]::Escape("{{DISCRETION}}"), $script:WizardAnswers.Discretion
-            $content = $content -replace [regex]::Escape("{{STYLE}}"), $script:WizardAnswers.Style
-            $content = $content -replace [regex]::Escape("{skill_level_description}"), $script:WizardAnswers.SkillLevelDesc
-            $content | Set-Content -Path $outputPath -Encoding UTF8 -Force
-            Write-Success "Agente creado: $outputPath"
-        } catch {
-            Write-ErrorMsg ("Error creando agente $($agent): $_")
+        $templatesDir = Join-Path $PSScriptRoot "..\templates\agents"
+        try { $templatesDir = (Resolve-Path $templatesDir -ErrorAction Stop).Path } catch {
+            Write-Warn "No se encontro templates/agents"
+        }
+
+        $agentTemplates = @("lara-plan.md", "lara-vip.md")
+        foreach ($agent in $agentTemplates) {
+            $templatePath = Join-Path $templatesDir $agent
+            $outputPath = Join-Path $opencodeAgentsDir $agent
+            if (-not (Test-Path -LiteralPath $templatePath)) {
+                Write-Warn "Template no encontrado: $templatePath"
+                continue
+            }
+            try {
+                $content = Get-Content -Path $templatePath -Raw -Encoding UTF8
+                $content = $content -replace [regex]::Escape("{{PRONOUN}}"), $script:WizardAnswers.Pronoun
+                $content = $content -replace [regex]::Escape("{{SKILL_LEVEL}}"), $script:WizardAnswers.SkillLevel
+                $content = $content -replace [regex]::Escape("{{ASSISTANCE_MODE}}"), $script:WizardAnswers.AssistanceMode
+                $content = $content -replace [regex]::Escape("{{DISCRETION}}"), $script:WizardAnswers.Discretion
+                $content = $content -replace [regex]::Escape("{{STYLE}}"), $script:WizardAnswers.Style
+                $content = $content -replace [regex]::Escape("{skill_level_description}"), $script:WizardAnswers.SkillLevelDesc
+                $content | Set-Content -Path $outputPath -Encoding UTF8 -Force
+                Write-Success "Agente creado: $outputPath"
+            } catch {
+                Write-ErrorMsg ("Error creando agente $($agent): $_")
+            }
         }
     }
 
@@ -649,10 +830,10 @@ function Setup-Sync {
     } catch { Write-Warn "Error en sync inicial: $_" }
 }
 
-# ── 10. SHOW SUMMARY ─────────────────────────
+# ── 11. SHOW SUMMARY ─────────────────────────
 function Show-Summary {
-    Write-Step "Paso 10/10 - Resumen final"
-    Set-Progress -Step 9 -Status "Mostrando resumen..."
+    Write-Step "Paso 11/11 - Resumen final"
+    Set-Progress -Step 10 -Status "Mostrando resumen..."
 
     Write-Host "`n"
     Write-Host "+---------------------------------------------+" -ForegroundColor Cyan
@@ -695,6 +876,12 @@ function Show-Summary {
 
     if ($c3) { Write-Host "  [x] design.md" -ForegroundColor Green }
     else { Write-Host "  [ ] design.md" -ForegroundColor Gray }
+
+    $installType = $script:WizardAnswers.InstallType
+    if ($installType -eq "upgrade") {
+        Write-Host "`n  [Backup]" -ForegroundColor Magenta
+        Write-Host "  [x] Config existente respaldada antes de instalar" -ForegroundColor Green
+    }
 
     Write-Host "`n  [Directorios]" -ForegroundColor Magenta
     Write-Host "  Proyectos : $($script:WizardAnswers.DevDir)" -ForegroundColor White
@@ -754,6 +941,29 @@ function Start-NonInteractiveWizard {
         default              { "moderate" }
     }
 
+    # Detect install type and backup config if needed
+    $installType = if ($config.install_type) { $config.install_type } else { "fresh" }
+    $backupExisting = if ($config.backup_existing) { $config.backup_existing } else { $false }
+    $syncMemories = if ($config.sync_memories -eq $true) { $true } else { $false }
+    $restoreAgents = if ($config.restore_agents) { $config.restore_agents } else { "update" }
+
+    # Backup existing config before install (if upgrade)
+    if ($installType -ne "fresh" -and $backupExisting -ne $false) {
+        Write-Host "`n  [PRE-FLIGHT] Backupeando config existente..." -ForegroundColor Cyan
+        $backupPath = Backup-ExistingConfig -Mode $backupExisting
+        if ($backupPath) {
+            Write-Success "Config respaldada en: $backupPath"
+        }
+    } else {
+        Write-Info "Instalacion fresh o backup omitido por el usuario."
+    }
+
+    # Sync Engram memories if requested
+    if ($syncMemories) {
+        Write-Host "`n  [PRE-FLIGHT] Sincronizando memorias de Engram..." -ForegroundColor Cyan
+        $null = Sync-EngramMemories
+    }
+
     # Set up WizardAnswers
     $script:WizardAnswers = @{
         GitHubUser             = $ghUser
@@ -776,6 +986,8 @@ function Start-NonInteractiveWizard {
         InstallGentlemanSkills = if ($config.install_gentleman_skills -eq $false) { $false } else { $true }
         InstallVSCode          = if ($config.install_vscode -eq $false) { $false } else { $true }
         InstallGGA             = if ($config.install_gga -eq $true) { $true } else { $false }
+        RestoreAgents          = $restoreAgents
+        InstallType            = $installType
     }
 
     $script:UserProfile = @{
@@ -810,7 +1022,7 @@ function Start-Wizard {
         Write-Host "|     Usando valores predeterminados         |" -ForegroundColor Yellow
     } else {
         Write-Host "|        ASISTENTE DE CONFIGURACION            |" -ForegroundColor Magenta
-        Write-Host "|     Te voy a hacer 10 preguntas              |" -ForegroundColor Magenta
+        Write-Host "|     Te voy a hacer algunas preguntas         |" -ForegroundColor Magenta
     }
     Write-Host "+---------------------------------------------+" -ForegroundColor Magenta
     if (-not $script:IsDryRun) {
@@ -840,13 +1052,16 @@ function Start-Wizard {
         Set-Progress -Step 6 -Status "Mision..."
         Invoke-MissionPrompt
 
-        Set-Progress -Step 7 -Status "Instalando..."
+        Set-Progress -Step 7 -Status "Backup..."
+        Invoke-BackupPrompt
+
+        Set-Progress -Step 8 -Status "Instalando..."
         Install-Components
 
-        Set-Progress -Step 8 -Status "Sincronizacion..."
+        Set-Progress -Step 9 -Status "Sincronizacion..."
         Setup-Sync
 
-        Set-Progress -Step 9 -Status "Resumen..."
+        Set-Progress -Step 10 -Status "Resumen..."
         Show-Summary
 
         Write-Progress -Activity "Lara Diaries" -Completed

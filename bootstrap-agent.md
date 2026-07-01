@@ -78,9 +78,96 @@ Check what's already installed:
 
 Report the output to the user so they know what's already set up.
 
+## Phase 2.5: Detect Existing Installation
+
+The `-Check` output already shows "Tipo de instalacion: FRESH/UPGRADE". Use that to determine install type. Only run manual checks if the -Check output is unclear.
+
+After the check, analyze whether this is a first install or an upgrade:
+
+**Manual check (fallback if -Check output is unclear):**
+```powershell
+# Windows: ¿existe ~/.config/opencode/opencode.json?
+Test-Path "$env:USERPROFILE\.config\opencode\opencode.json"
+
+# Check if Lara agents already exist
+Test-Path "$env:USERPROFILE\.config\opencode\agents\lara-plan.md"
+Test-Path "$env:USERPROFILE\.config\opencode\agents\lara-vip.md"
+
+# Check if engram has data
+Test-Path "$env:USERPROFILE\.engram\engram.db"
+```
+
+```bash
+# Linux: same checks
+test -f ~/.config/opencode/opencode.json && echo "exists"
+test -f ~/.config/opencode/agents/lara-plan.md && echo "has plan"
+test -f ~/.config/opencode/agents/lara-vip.md && echo "has vip"
+test -f ~/.engram/engram.db && echo "has engram"
+```
+
+Based on results, classify the installation:
+
+| Scenario | Code | What to do |
+|----------|------|------------|
+| No opencode config | `fresh` | First install, go straight to questions |
+| Has config, no Lara agents | `existing-no-lara` | Offer backup, install Lara agents |
+| Has config + Lara agents | `existing-with-lara` | Offer backup, offer upgrade, merge agents |
+| Has Engram data | `has-memories` | Offer sync (separate from main flow) |
+
+Report to user: "Veo que ya tenés {fresh | una config existente | Lara instalada}."
+
+If existing config detected, say: "Encontré una configuración existente. No te preocupes — no voy a pisar nada sin preguntar."
+
 ## Phase 3: Ask User (via chat)
 
 Use the `question` tool to ask the user ONE QUESTION AT A TIME. Wait for each answer before asking the next.
+
+### 3.0 Existing Config Questions (only if Phase 2.5 detected existing config)
+
+Ask these BEFORE the GitHub login question if config already exists:
+
+**Q0a: Backup existing config**
+```json
+{
+  "question": "Encontré una configuración de opencode existente. ¿Querés que la backupee antes de instalar las novedades? (Siempre se puede restaurar después)",
+  "options": [
+    {"label": "Sí, backup completo", "description": "Respaldo config, agentes, plugins y skills"},
+    {"label": "Sí, solo agentes", "description": "Solo respaldo los agentes personalizados"},
+    {"label": "No, actualizá nomas", "description": "Confío en que no se va a perder nada"}
+  ]
+}
+```
+
+**Q0b: Engram memories sync** (only if existing Engram data detected)
+```json
+{
+  "question": "Tengo memorias de Engram guardadas. ¿Querés sincronizarlas a GitHub antes de continuar?",
+  "options": [
+    {"label": "Sí, sincronizar", "description": "Subir memorias a GitHub antes de instalar"},
+    {"label": "No, después", "description": "Lo hago manual más tarde"}
+  ]
+}
+```
+
+**Q0c: Restore custom agents** (only if Lara agents already exist)
+```json
+{
+  "question": "Ya tenés tus agentes Lara personalizados. ¿Querés conservarlos como están o actualizarlos con las últimas versiones?",
+  "options": [
+    {"label": "Conservar mis agentes", "description": "No tocar mis prompts personalizados"},
+    {"label": "Actualizar templates", "description": "Reemplazar con las últimas versiones (se backupean antes)"}
+  ]
+}
+```
+
+**Important**: After asking these, add the answers to the config JSON:
+```json
+{
+  "backup_existing": "full",
+  "sync_memories": true,
+  "restore_agents": "keep"
+}
+```
 
 ### 3.1 GitHub Login
 
@@ -157,6 +244,8 @@ Ask each YES/NO separately:
 
 After collecting all answers, build the JSON config and run the bootstrap:
 
+Include ALL answers collected. The config JSON grows based on what was detected:
+
 ```json
 {
   "pronoun": "<answer>",
@@ -170,7 +259,31 @@ After collecting all answers, build the JSON config and run the bootstrap:
   "use_design_doc": true,
   "style": "clean-ui",
   "mission": "personal-important",
-  "dev_dir": "C:\\Users\\<name>\\Documents\\Develops"
+  "dev_dir": "C:\\Users\\<name>\\Documents\\Develops",
+
+  "backup_existing": "full",           // from Q0a: "full" | "agents-only" | false
+  "sync_memories": true,                // from Q0b
+  "restore_agents": "keep",             // from Q0c: "keep" | "update"
+  "install_type": "upgrade"             // from Phase 2.5: "fresh" | "upgrade"
+}
+```
+
+For fresh installs, omit backup fields:
+```json
+{
+  "pronoun": "<answer>",
+  "skill_level": "<answer>",
+  "assistance_mode": "<answer>",
+  "install_gentle_ai": true,
+  "install_gentleman_skills": true,
+  "install_vscode": true,
+  "install_gga": false,
+  "repo_mode": "auto",
+  "use_design_doc": true,
+  "style": "clean-ui",
+  "mission": "personal-important",
+  "dev_dir": "/home/<name>/Documents/Develops",
+  "install_type": "fresh"
 }
 ```
 

@@ -14,6 +14,7 @@
     -NonInteractive  : JSON config string for AI-driven install.
                        Skips all prompts, runs install directly.
                        Example: '{"pronoun":"she/her","install_gentle_ai":true}'
+                       Upgrade fields: backup_existing, sync_memories, restore_agents, install_type
 .NOTES
     Compatible with Windows PowerShell 5.1 and PowerShell Core 7+.
 #>
@@ -152,6 +153,13 @@ function Start-CheckOnly {
         $null = Test-Prerequisites
     }
 
+    # Detect existing config
+    $configDir = Join-Path $HOME ".config\opencode"
+    $hasConfig = Test-Path (Join-Path $configDir "opencode.json")
+    $hasLaraPlan = Test-Path (Join-Path $configDir "agents\lara-plan.md")
+    $hasLaraVip = Test-Path (Join-Path $configDir "agents\lara-vip.md")
+    $hasEngram = Test-Path (Join-Path $HOME ".engram\engram.db")
+
     Write-Host "`n  Resumen del check:" -ForegroundColor Cyan
     Write-Host "  git:  $(if ($script:PrereqResults['git'])  { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['git'])  { 'Green' } else { 'Red' })
     Write-Host "  gh:   $(if ($script:PrereqResults['gh'])   { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['gh'])   { 'Green' } else { 'Red' })
@@ -160,6 +168,12 @@ function Start-CheckOnly {
     Write-Host "  code: $(if ($codeCmd) { 'OK' } else { 'OPCIONAL' })" -ForegroundColor $(if ($codeCmd) { 'Green' } else { 'Yellow' })
     $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
     Write-Host "  opencode: $(if ($opencodeCmd) { 'OK' } else { 'FALTA - instalar primero' })" -ForegroundColor $(if ($opencodeCmd) { 'Green' } else { 'Red' })
+    Write-Host "`n  Config existente:" -ForegroundColor Cyan
+    Write-Host "  opencode.json: $(if ($hasConfig) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasConfig) { 'Green' } else { 'Gray' })
+    Write-Host "  Lara-Plan:     $(if ($hasLaraPlan) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasLaraPlan) { 'Green' } else { 'Gray' })
+    Write-Host "  Lara-VIP:      $(if ($hasLaraVip) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasLaraVip) { 'Green' } else { 'Gray' })
+    Write-Host "  Engram DB:     $(if ($hasEngram) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasEngram) { 'Green' } else { 'Gray' })
+    Write-Host "`n  Tipo de instalacion: $(if ($hasConfig) { 'UPGRADE (config existente)' } else { 'FRESH (primera vez)' })" -ForegroundColor Yellow
     Write-Host "`n  Para instalar: ejecuta .\bootstrap.ps1 sin parametros." -ForegroundColor Cyan
     Write-Host "  Para simular:  ejecuta .\bootstrap.ps1 -DryRun`n" -ForegroundColor Cyan
 }
@@ -211,6 +225,25 @@ function Start-DryRun {
     if ($configRepo){Write-Host "  |   [OK] opencode-config (local)                                |" -ForegroundColor Green }
     else            {Write-Host "  |   [+] opencode-config (se creara)                             |" -ForegroundColor Yellow }
     Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+    # Detect existing config
+    $configDir = Join-Path $HOME ".config\opencode"
+    $hasConfig = Test-Path (Join-Path $configDir "opencode.json")
+    $hasLaraPlan = Test-Path (Join-Path $configDir "agents\lara-plan.md")
+    $hasLaraVip = Test-Path (Join-Path $configDir "agents\lara-vip.md")
+    $hasEngram = Test-Path (Join-Path $HOME ".engram\engram.db")
+
+    if ($hasConfig) {
+        Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
+        Write-Host "  | Config existente detectada                          |" -ForegroundColor Yellow
+        if ($hasLaraPlan){Write-Host "  |   [OK] Lara-Plan (agente)                               |" -ForegroundColor Green}
+        else            {Write-Host "  |   [+] Lara-Plan (se creara)                            |" -ForegroundColor Yellow}
+        if ($hasLaraVip){Write-Host "  |   [OK] Lara-VIP (agente)                               |" -ForegroundColor Green}
+        else            {Write-Host "  |   [+] Lara-VIP (se creara)                            |" -ForegroundColor Yellow}
+        if ($hasEngram) {Write-Host "  |   [OK] Engram memorias (datos existentes)               |" -ForegroundColor Green}
+        else            {Write-Host "  |   [ ] Engram (sin datos previos)                        |" -ForegroundColor Gray}
+        Write-Host "  |   Se preguntara antes de modificar cualquier cosa.   |" -ForegroundColor Yellow
+    }
+
     Write-Host "  | Sync: cada 30 min via Task Scheduler                  |" -ForegroundColor Cyan
     Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
 
