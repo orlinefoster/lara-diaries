@@ -360,6 +360,38 @@ mission_prompt() {
 }
 
 # =============================================================================
+# Dry-Run / Status Helpers
+# =============================================================================
+
+# Check and report component status — skip actual install in dry-run
+component_status() {
+    local name="$1"
+    local already="$2"   # "true" or "false"
+    local optional="${3:-false}"
+
+    if [[ "$already" == "true" ]]; then
+        echo -e "  ${GREEN}✓${RESET} [$name] ${BOLD}INSTALADO${RESET}"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$optional" == "true" ]]; then
+            echo -e "  ${YELLOW}○${RESET} [$name] ${BOLD}OPCIONAL${RESET} (se instalaria)"
+        else
+            echo -e "  ${YELLOW}⬇${RESET}  [$name] ${BOLD}PENDIENTE${RESET} (se instalaria)"
+        fi
+        return 2  # simulated
+    fi
+
+    if [[ "$optional" == "true" ]]; then
+        echo -e "  ${YELLOW}○${RESET} [$name] ${BOLD}OPCIONAL${RESET}"
+    else
+        echo -e "  ${YELLOW}⬇${RESET}  [$name] ${BOLD}INSTALANDO...${RESET}"
+    fi
+    return 1  # needs install
+}
+
+# =============================================================================
 # 8. Install Components
 # =============================================================================
 install_components() {
@@ -367,6 +399,11 @@ install_components() {
     log_title "⚙️  Installing Components"
     echo "────────────────────────────────────────"
     echo ""
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "  ${CYAN}[DRY-RUN] No se instalará nada. Reportando estado actual...${RESET}"
+        echo ""
+    fi
 
     # --- Resolve templates directory ---
     local templates_dir=""
@@ -383,33 +420,40 @@ install_components() {
 
     # --- 8a. Gentle AI & Gentleman Skills ---
     if [[ "$INSTALL_GENTLE_AI" == "true" ]]; then
-        log_info "Installing Gentle AI..."
+        component_status "Gentle AI" "$([[ -d "$HOME/gentle-ai" ]] && echo true || echo false)"
+        local ga_status=$?
 
-        if [[ -d "$HOME/gentle-ai" ]]; then
-            log_info "gentle-ai directory exists. Pulling latest..."
-            git -C "$HOME/gentle-ai" pull --rebase 2>/dev/null || log_warn "Could not update gentle-ai."
+        if [[ $ga_status -eq 0 ]]; then
+            log_info "Gentle AI ya esta instalado. Actualizando..."
+            if [[ "$DRY_RUN" != "true" ]]; then
+                git -C "$HOME/gentle-ai" pull --rebase 2>/dev/null || log_warn "Could not update gentle-ai."
+            fi
+        elif [[ $ga_status -eq 2 ]]; then
+            : # dry-run — already reported
         else
             if git clone https://github.com/Gentleman-Programming/gentle-ai.git "$HOME/gentle-ai"; then
                 log_info "gentle-ai cloned."
+                if [[ -f "$HOME/gentle-ai/install.sh" ]]; then
+                    bash "$HOME/gentle-ai/install.sh" || log_warn "gentle-ai installer reported issues."
+                fi
             else
                 log_error "Failed to clone gentle-ai. Check internet connection."
                 return 1
             fi
         fi
 
-        if [[ -f "$HOME/gentle-ai/install.sh" ]]; then
-            bash "$HOME/gentle-ai/install.sh" || log_warn "gentle-ai installer reported issues."
-        fi
-
         # --- 8b. Gentleman Skills ---
         if [[ "$INSTALL_SKILLS" == "true" ]]; then
-            log_info "Installing Gentleman Skills..."
             local skills_dir="$OPENCODE_CONFIG_DIR/skills"
-            mkdir -p "$skills_dir"
+            component_status "Gentleman Skills" "$([[ -d "$skills_dir/gentleman-skills" ]] && echo true || echo false)"
+            local gs_status=$?
 
-            if [[ -d "$skills_dir/gentleman-skills" ]]; then
-                log_info "Gentleman Skills already installed. Skipping."
+            if [[ $gs_status -eq 0 ]]; then
+                log_info "Gentleman Skills ya instalado."
+            elif [[ $gs_status -eq 2 ]]; then
+                : # dry-run
             else
+                mkdir -p "$skills_dir"
                 if git clone https://github.com/Gentleman-Programming/Gentleman-Skills.git "$skills_dir/gentleman-skills"; then
                     log_info "Gentleman Skills installed."
                 else
@@ -418,13 +462,16 @@ install_components() {
             fi
         fi
     else
-        log_info "Skipping Gentle AI installation (user opted out)."
+        echo -e "  ${GRAY}[Gentle AI] ${BOLD}OMITIDO${RESET}"
     fi
 
     # --- 8c. Engram ---
-    log_info "Installing Engram persistent memory..."
-    if [[ -x "$(command -v engram)" ]]; then
-        log_info "Engram already present: $(engram --version 2>/dev/null || echo 'version unknown')"
+    component_status "Engram" "$(command -v engram &>/dev/null && echo true || echo false)"
+    local engram_status=$?
+    if [[ $engram_status -eq 0 ]]; then
+        log_info "Engram ya instalado: $(engram --version 2>/dev/null || echo 'version unknown')"
+    elif [[ $engram_status -eq 2 ]]; then
+        : # dry-run
     else
         local engram_installer="/tmp/engram-install-$$.sh"
         if curl -fsSL https://engram.gg/install.sh -o "$engram_installer"; then
@@ -444,13 +491,15 @@ install_components() {
 
     # --- 8d. VSCode (optional) ---
     if [[ "${INSTALL_VSCODE:-false}" == "true" ]]; then
-        log_info "Installing VSCode..."
-        if [[ -x "$(command -v code)" ]]; then
-            log_info "VSCode already installed: $(code --version 2>&1 | head -1)"
+        component_status "VSCode" "$(command -v code &>/dev/null && echo true || echo false)" "true"
+        local vscode_status=$?
+        if [[ $vscode_status -eq 0 ]]; then
+            log_info "VSCode ya instalado: $(code --version 2>&1 | head -1)"
+        elif [[ $vscode_status -eq 2 ]]; then
+            : # dry-run
         else
             case "$PKG_MANAGER" in
                 apt)
-                    log_info "Installing via apt..."
                     sudo apt install -y code 2>/dev/null || {
                         log_warn "Package 'code' not in apt repo. Installing via .deb..."
                         local deb_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
@@ -461,7 +510,6 @@ install_components() {
                 dnf)
                     sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>/dev/null || true
                     sudo dnf install -y code 2>/dev/null || {
-                        log_warn "Installing via RPM..."
                         local rpm_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-rpm-x64"
                         local rpm_path="/tmp/vscode-$$.rpm"
                         curl -fsSL "$rpm_url" -o "$rpm_path" && sudo dnf install -y "$rpm_path" && rm -f "$rpm_path"
@@ -469,13 +517,12 @@ install_components() {
                     ;;
                 pacman)
                     sudo pacman -S --noconfirm code 2>/dev/null || {
-                        log_warn "Installing via AUR (yay)..."
                         yay -S --noconfirm visual-studio-code-bin 2>/dev/null || \
-                            log_warn "Could not install VSCode. Install manually: https://code.visualstudio.com/"
+                            log_warn "Could not install VSCode. Install manually"
                     }
                     ;;
                 *)
-                    log_warn "Unknown package manager. Install VSCode manually: https://code.visualstudio.com/"
+                    log_warn "Unknown package manager. Install VSCode manually."
                     ;;
             esac
             if [[ -x "$(command -v code)" ]]; then
@@ -485,29 +532,31 @@ install_components() {
             fi
         fi
     else
-        log_info "Skipping VSCode installation."
+        echo -e "  ${GRAY}[VSCode] ${BOLD}OMITIDO${RESET}"
     fi
 
     # --- 8e. Gentleman Guardian Angel (optional) ---
     if [[ "${INSTALL_GGA:-false}" == "true" ]]; then
-        log_info "Installing Gentleman Guardian Angel..."
-        if [[ -d "$HOME/gentleman-guardian-angel" ]]; then
-            log_info "GGA already cloned. Updating..."
+        component_status "Gentleman Guardian Angel" "$([[ -d "$HOME/gentleman-guardian-angel" ]] && echo true || echo false)" "true"
+        local gga_status=$?
+        if [[ $gga_status -eq 0 ]]; then
+            log_info "GGA ya instalado."
             git -C "$HOME/gentleman-guardian-angel" pull --rebase 2>/dev/null || true
+        elif [[ $gga_status -eq 2 ]]; then
+            : # dry-run
         else
             if git clone https://github.com/Gentleman-Programming/gentleman-guardian-angel.git "$HOME/gentleman-guardian-angel"; then
-                log_info "GGA cloned."
+                if [[ -f "$HOME/gentleman-guardian-angel/install.sh" ]]; then
+                    bash "$HOME/gentleman-guardian-angel/install.sh" 2>/dev/null && \
+                        log_info "GGA installed. Run 'gga init' to activate." || \
+                        log_warn "GGA installer had issues."
+                fi
             else
                 log_error "Failed to clone GGA."
             fi
         fi
-        if [[ -f "$HOME/gentleman-guardian-angel/install.sh" ]]; then
-            bash "$HOME/gentleman-guardian-angel/install.sh" 2>/dev/null && \
-                log_info "GGA installed. Run 'gga init' in a project to activate." || \
-                log_warn "GGA installer had issues."
-        fi
     else
-        log_info "Skipping Gentleman Guardian Angel."
+        echo -e "  ${GRAY}[GGA] ${BOLD}OMITIDO${RESET}"
     fi
 
     # --- 8f. Create Lara Agents from templates ---

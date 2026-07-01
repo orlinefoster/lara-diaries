@@ -331,10 +331,68 @@ function Save-UserProfile {
     }
 }
 
+# ── DRY-RUN / STATUS HELPERS ─────────────────
+$script:IsDryRun = if ($script:IsDryRun -eq $true) { $true } else { $false }
+
+function Write-Status {
+    param([string]$Component, [string]$Status)
+    $icon = switch ($Status) {
+        "INSTALADO"  { "✅" }
+        "INSTALAR"   { "⬇️ " }
+        "OMITIDO"    { "⏭️ " }
+        "OPCIONAL"   { "🔧" }
+        "ERROR"      { "❌" }
+        default      { "❓" }
+    }
+    if ($script:IsDryRun) {
+        Write-Host "  $icon [$Status] $Component" -ForegroundColor $(if ($Status -eq "INSTALADO") { 'Green' } elseif ($Status -eq "INSTALAR") { 'Yellow' } else { 'Gray' })
+    } else {
+        Write-Host "  $icon [$Status] $Component" -ForegroundColor $(if ($Status -in @("INSTALADO","INSTALAR")) { 'Green' } else { 'Gray' })
+    }
+}
+
+function Install-Component {
+    param(
+        [string]$Name,
+        [scriptblock]$CheckBlock,
+        [scriptblock]$InstallBlock,
+        [switch]$Optional
+    )
+
+    $alreadyInstalled = & $CheckBlock
+    if ($alreadyInstalled) {
+        Write-Status -Component $Name -Status "INSTALADO"
+        return $true
+    }
+
+    if (-not $Optional) {
+        Write-Status -Component $Name -Status "INSTALAR"
+    } else {
+        Write-Status -Component $Name -Status "OPCIONAL"
+    }
+
+    if ($script:IsDryRun) {
+        return $null  # simulated
+    }
+
+    try {
+        & $InstallBlock
+        return $true
+    } catch {
+        Write-Status -Component $Name -Status "ERROR"
+        Write-Warn "  $($_.Exception.Message)"
+        return $false
+    }
+}
+
 # ── 8. INSTALL COMPONENTS ────────────────────
 function Install-Components {
     Write-Step "Paso 8/10 - Instalacion de componentes"
     Set-Progress -Step 7 -Status "Instalando componentes..."
+
+    if ($script:IsDryRun) {
+        Write-Host "  [DRY-RUN] No se instalara nada. Reportando estado actual...`n" -ForegroundColor Cyan
+    }
 
     $opencodeSkillsDir = Join-Path $env:APPDATA "opencode\skills"
     $opencodeAgentsDir = Join-Path $env:APPDATA "opencode\agents"
@@ -342,118 +400,93 @@ function Install-Components {
     # Gentle AI
     if ($script:WizardAnswers.InstallGentleAI) {
         $gaDir = Join-Path $HOME "gentle-ai"
-        Write-Info "Instalando Gentle AI..."
-        if (-not (Test-Path -LiteralPath $gaDir)) {
-            try {
+        $null = Install-Component -Name "Gentle AI" `
+            -CheckBlock { Test-Path -LiteralPath $gaDir } `
+            -InstallBlock {
                 $null = & git clone "https://github.com/Gentleman-Programming/gentle-ai.git" $gaDir 2>&1
                 if ($LASTEXITCODE -eq 0) { Write-Success "Gentle AI clonado en: $gaDir" }
-                else { Write-ErrorMsg "Error clonando Gentle AI" }
-            } catch {
-                Write-ErrorMsg "Error clonando Gentle AI: $_"
+                else { throw "Error clonando Gentle AI" }
+                $gaInstaller = Join-Path $gaDir "install.ps1"
+                if (Test-Path -LiteralPath $gaInstaller) {
+                    Write-Info "Ejecutando instalador de Gentle AI..."
+                    $null = & $gaInstaller 2>&1
+                    Write-Success "Instalador ejecutado."
+                }
             }
-        } else {
-            Write-Info "Gentle AI ya existe"
-            try {
-                Push-Location $gaDir
-                $null = & git pull --rebase 2>&1
-                Pop-Location
-            } catch { try { Pop-Location } catch {} }
-        }
-        $gaInstaller = Join-Path $gaDir "install.ps1"
-        if (Test-Path -LiteralPath $gaInstaller) {
-            try {
-                Write-Info "Ejecutando instalador de Gentle AI..."
-                $null = & $gaInstaller 2>&1
-                Write-Success "Instalador ejecutado."
-            } catch { Write-Warn "Error ejecutando instalador: $_" }
-        }
+    } else {
+        Write-Status -Component "Gentle AI" -Status "OMITIDO"
     }
 
     # Gentleman Skills
     if ($script:WizardAnswers.InstallGentlemanSkills) {
-        Write-Info "Instalando Gentleman Skills..."
-        if (-not (Test-Path -LiteralPath $opencodeSkillsDir)) {
-            $null = New-Item -ItemType Directory -Path $opencodeSkillsDir -Force
-        }
         $skillsRepo = Join-Path $opencodeSkillsDir "Gentleman-Skills"
-        if (-not (Test-Path -LiteralPath $skillsRepo)) {
-            try {
+        $null = Install-Component -Name "Gentleman Skills" `
+            -CheckBlock { Test-Path -LiteralPath $skillsRepo } `
+            -InstallBlock {
+                if (-not (Test-Path -LiteralPath $opencodeSkillsDir)) {
+                    $null = New-Item -ItemType Directory -Path $opencodeSkillsDir -Force
+                }
                 $null = & git clone "https://github.com/Gentleman-Programming/Gentleman-Skills.git" $skillsRepo 2>&1
                 if ($LASTEXITCODE -eq 0) { Write-Success "Gentleman Skills clonado" }
-                else { Write-ErrorMsg "Error clonando Gentleman Skills" }
-            } catch { Write-ErrorMsg "Error clonando Gentleman Skills: $_" }
-        } else {
-            Write-Info "Gentleman Skills ya existe"
-        }
+                else { throw "Error clonando Gentleman Skills" }
+            }
+    } else {
+        Write-Status -Component "Gentleman Skills" -Status "OMITIDO"
     }
 
     # Engram
-    Write-Info "Instalando engram..."
-    $existing = Get-Command "engram" -ErrorAction SilentlyContinue
-    if ($existing) { Write-Success "Engram ya esta instalado." }
-    else {
-        $winget = Get-Command "winget" -ErrorAction SilentlyContinue
-        if ($winget) {
-            try {
+    $null = Install-Component -Name "Engram (memoria persistente)" `
+        -CheckBlock { Get-Command "engram" -ErrorAction SilentlyContinue } `
+        -InstallBlock {
+            $winget = Get-Command "winget" -ErrorAction SilentlyContinue
+            if ($winget) {
                 $null = & winget install "engram" --accept-source-agreements --accept-package-agreements 2>&1
                 $reCheck = Get-Command "engram" -ErrorAction SilentlyContinue
-                if ($reCheck) { Write-Success "Engram instalado con winget." }
-                else { Write-Warn "No se pudo instalar engram con winget." }
-            } catch { Write-Warn "Error instalando engram: $_" }
-        } else {
-            Write-Warn "winget no disponible. Descarga engram desde: https://github.com/Gentleman-Programming/engram/releases"
+                if (-not $reCheck) { throw "No se pudo instalar engram con winget." }
+            } else {
+                throw "winget no disponible. Descarga desde: https://github.com/Gentleman-Programming/engram/releases"
+            }
         }
-    }
 
     # VSCode
     if ($script:WizardAnswers.InstallVSCode) {
-        Write-Info "Instalando VSCode..."
-        $existingCode = Get-Command "code" -ErrorAction SilentlyContinue
-        if ($existingCode) {
-            Write-Success "VSCode ya esta instalado."
-        } else {
-            $winget = Get-Command "winget" -ErrorAction SilentlyContinue
-            if ($winget) {
-                try {
+        $null = Install-Component -Name "VSCode" -Optional `
+            -CheckBlock { Get-Command "code" -ErrorAction SilentlyContinue } `
+            -InstallBlock {
+                $winget = Get-Command "winget" -ErrorAction SilentlyContinue
+                if ($winget) {
                     $null = & winget install "Microsoft.VisualStudioCode" --accept-source-agreements --accept-package-agreements 2>&1
                     $reCheck = Get-Command "code" -ErrorAction SilentlyContinue
-                    if ($reCheck) { Write-Success "VSCode instalado." }
-                    else { Write-Warn "VSCode instalado pero 'code' no esta en PATH. Puede requerir reiniciar la terminal." }
-                } catch { Write-Warn "Error instalando VSCode: $_" }
-            } else {
-                Write-Warn "winget no disponible. Descarga VSCode desde: https://code.visualstudio.com/"
+                    if (-not $reCheck) { throw "VSCode instalado pero 'code' no esta en PATH." }
+                } else {
+                    throw "winget no disponible. Descarga desde: https://code.visualstudio.com/"
+                }
             }
-        }
+    } else {
+        Write-Status -Component "VSCode" -Status "OMITIDO"
     }
 
     # Gentleman Guardian Angel (optional)
     if ($script:WizardAnswers.InstallGGA) {
-        Write-Info "Instalando Gentleman Guardian Angel..."
         $ggaDir = Join-Path $HOME "gentleman-guardian-angel"
-        if (-not (Test-Path -LiteralPath $ggaDir)) {
-            try {
+        $null = Install-Component -Name "Gentleman Guardian Angel" -Optional `
+            -CheckBlock { Test-Path -LiteralPath $ggaDir } `
+            -InstallBlock {
                 $null = & git clone "https://github.com/Gentleman-Programming/gentleman-guardian-angel.git" $ggaDir 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Success "GGA clonado."
-                    $ggaInstall = Join-Path $ggaDir "install.ps1"
-                    if (Test-Path -LiteralPath $ggaInstall) {
-                        $null = & $ggaInstall 2>&1
-                        Write-Success "GGA instalado. Para activarlo: gga init en tu proyecto."
-                    } else {
-                        # Try bash-based installer on Windows
-                        $ggaSh = Join-Path $ggaDir "install.sh"
-                        if (Test-Path -LiteralPath $ggaSh) {
-                            $null = & "bash" $ggaSh 2>&1
-                            Write-Success "GGA instalado (via bash). Para activarlo: gga init en tu proyecto."
-                        }
-                    }
+                if ($LASTEXITCODE -ne 0) { throw "Error clonando GGA" }
+                $ggaInstall = Join-Path $ggaDir "install.ps1"
+                if (Test-Path -LiteralPath $ggaInstall) {
+                    $null = & $ggaInstall 2>&1
                 } else {
-                    Write-ErrorMsg "Error clonando GGA."
+                    $ggaSh = Join-Path $ggaDir "install.sh"
+                    if (Test-Path -LiteralPath $ggaSh) {
+                        $null = & "bash" $ggaSh 2>&1
+                    }
                 }
-            } catch { Write-ErrorMsg "Error instalando GGA: $_" }
-        } else {
-            Write-Info "GGA ya existe."
-        }
+                Write-Success "GGA instalado. Para activarlo: gga init en tu proyecto."
+            }
+    } else {
+        Write-Status -Component "Gentleman Guardian Angel" -Status "OMITIDO"
     }
 
     # Create agents from templates

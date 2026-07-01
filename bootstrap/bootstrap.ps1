@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Lara Diaries - Windows Bootstrap
-# Usage: .\bootstrap.ps1
+# Usage: .\bootstrap.ps1 [-Check] [-DryRun]
 # Requires: PowerShell 5.1+ or PowerShell Core 7+
 
 <#
@@ -8,11 +8,21 @@
     Lara Diaries bootstrap script for Windows.
 .DESCRIPTION
     Checks for git, gh CLI, Node.js, winget, and guides through setup.
+
+    -Check   : Only check prerequisites and report status. No installation.
+    -DryRun  : Show what would be installed without making changes.
 .NOTES
     Compatible with Windows PowerShell 5.1 and PowerShell Core 7+.
 #>
 
+param(
+    [switch]$Check,
+    [switch]$DryRun
+)
+
 $ErrorActionPreference = "Stop"
+$script:IsDryRun = $DryRun
+$script:IsCheckOnly = $Check
 
 # ── BANNER ────────────────────────────────────
 function Show-Banner {
@@ -129,8 +139,39 @@ function Test-Prerequisites {
     return $true
 }
 
+# ── CHECK MODE ────────────────────────────────
+function Start-CheckOnly {
+    Write-Host "`n  [CHECK MODE] Solo diagnositco - no se instalara nada.`n" -ForegroundColor Cyan
+    $allOk = Test-Prerequisites
+    Write-Host "`n  Resumen del check:" -ForegroundColor Cyan
+    Write-Host "  git:  $(if ($results['git'])  { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['git'])  { 'Green' } else { 'Red' })
+    Write-Host "  gh:   $(if ($results['gh'])   { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['gh'])   { 'Green' } else { 'Red' })
+    Write-Host "  node: $(if ($results['node']) { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['node']) { 'Green' } else { 'Red' })
+    $codeCmd = Get-Command "code" -ErrorAction SilentlyContinue
+    Write-Host "  code: $(if ($codeCmd) { 'OK' } else { 'OPCIONAL' })" -ForegroundColor $(if ($codeCmd) { 'Green' } else { 'Yellow' })
+    $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
+    Write-Host "  opencode: $(if ($opencodeCmd) { 'OK' } else { 'FALTA - instalar primero' })" -ForegroundColor $(if ($opencodeCmd) { 'Green' } else { 'Red' })
+    Write-Host "`n  Para instalar: ejecuta .\bootstrap.ps1 sin parametros." -ForegroundColor Cyan
+    Write-Host "  Para simular:  ejecuta .\bootstrap.ps1 -DryRun`n" -ForegroundColor Cyan
+}
+
+# ── DRY-RUN MODE ──────────────────────────────
+function Start-DryRun {
+    Write-Host "`n  [DRY-RUN MODE] Simulando configuracion... no se modificara nada.`n" -ForegroundColor Cyan
+
+    $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
+    $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
+    . $resolvedPath
+    Start-Wizard
+    Write-Host "`n  [DRY-RUN] Simulacion completada. Nada se instalo ni modifico." -ForegroundColor Cyan
+    Write-Host "  Para instalar de verdad, ejecuta .\bootstrap.ps1 sin parametros.`n" -ForegroundColor Cyan
+}
+
 # ── WIZARD MAIN ───────────────────────────────
 function Start-WizardMain {
+    if ($script:IsCheckOnly) { Start-CheckOnly; return }
+    if ($script:IsDryRun) { Start-DryRun; return }
+
     Write-Host "Queres que proceda con la configuracion completa de Lara Diaries?" -ForegroundColor Magenta
     $confirm = Read-Host "  (S/N, predeterminado: S)"
 

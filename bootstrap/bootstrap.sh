@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
 # Lara Diaries — Linux Bootstrap
-# Usage: curl -fsSL https://raw.githubusercontent.com/orlinefoster/lara-diaries/main/bootstrap/bootstrap.sh | bash
-#    or: ./bootstrap/bootstrap.sh
+# Usage: ./bootstrap.sh [--check] [--dry-run]
+#    or: curl -fsSL https://raw.githubusercontent.com/orlinefoster/lara-diaries/main/bootstrap/bootstrap.sh | bash
 set -euo pipefail
+
+# ── Parse flags ───────────────────────────────
+DRY_RUN=false
+CHECK_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --check|-c)   CHECK_ONLY=true  ;;
+        --dry-run|-n) DRY_RUN=true     ;;
+        --help|-h)
+            echo "Usage: ./bootstrap.sh [--check] [--dry-run]"
+            echo ""
+            echo "  --check, -c    Solo diagnosticar prerequisites. No instala nada."
+            echo "  --dry-run, -n  Simular la configuracion completa sin cambios."
+            echo "  --help, -h     Mostrar esta ayuda."
+            exit 0
+            ;;
+    esac
+done
 
 # =============================================================================
 # Colors & Helpers
@@ -159,11 +177,58 @@ check_prerequisites() {
 }
 
 # =============================================================================
+# Check Mode
+# =============================================================================
+check_only() {
+    echo ""
+    title "  [CHECK MODE] Solo diagnóstico — no se instalará nada."
+    echo ""
+    check_prerequisites
+    echo ""
+    echo -e "  ${BOLD}Resumen del check:${RESET}"
+    echo -e "  ${GREEN}git:      $(command -v git &>/dev/null && echo 'OK' || echo 'FALTA')${RESET}"
+    echo -e "  ${GREEN}gh:       $(command -v gh &>/dev/null && echo 'OK' || echo 'FALTA')${RESET}"
+    echo -e "  ${GREEN}node:     $(command -v node &>/dev/null && echo 'OK' || echo 'FALTA')${RESET}"
+    echo -e "  ${YELLOW}code:     $(command -v code &>/dev/null && echo 'OK' || echo 'OPCIONAL')${RESET}"
+    echo -e "  ${GREEN}opencode: $(command -v opencode &>/dev/null && echo 'OK' || echo 'FALTA - instalar primero')${RESET}"
+    echo ""
+    echo -e "  ${CYAN}Para instalar: corre ./bootstrap.sh sin parámetros.${RESET}"
+    echo -e "  ${CYAN}Para simular:  corre ./bootstrap.sh --dry-run${RESET}"
+    echo ""
+}
+
+# =============================================================================
+# Dry-Run Mode
+# =============================================================================
+dry_run() {
+    echo ""
+    title "  [DRY-RUN MODE] Simulando configuración... no se modificará nada."
+    echo ""
+    source "$(dirname "$0")/../modules/wizard-core.sh"
+    wizard_main
+    echo ""
+    info "Simulación completada. Nada se instaló ni modificó."
+    info "Para instalar de verdad, corre ./bootstrap.sh sin parámetros."
+    echo ""
+}
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 main() {
     print_banner
     detect_os
+
+    if [[ "$CHECK_ONLY" == "true" ]]; then
+        check_only
+        exit 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        dry_run
+        exit 0
+    fi
+
     check_prerequisites
 
     echo ""
