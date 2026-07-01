@@ -113,7 +113,7 @@ function Test-Prerequisites {
     Write-Host "`n  Verificando prerequisitos..." -ForegroundColor Cyan
     Write-Host ""
 
-    $results = @{
+    $script:PrereqResults = @{
         git  = Test-Prerequisite -Name "git"  -WinGetId "Git.Git"           -DownloadUrl "https://git-scm.com/downloads/win"
         gh   = Test-Prerequisite -Name "gh"   -WinGetId "GitHub.cli"        -DownloadUrl "https://cli.github.com/"
         node = Test-Prerequisite -Name "node" -WinGetId "OpenJS.NodeJS.LTS" -DownloadUrl "https://nodejs.org/"
@@ -129,7 +129,7 @@ function Test-Prerequisites {
 
     Write-Host ""
     $count = 0
-    foreach ($key in $results.Keys) { if (-not $results[$key]) { $count = $count + 1 } }
+    foreach ($key in $script:PrereqResults.Keys) { if (-not $script:PrereqResults[$key]) { $count = $count + 1 } }
     if ($count -gt 0) {
         Write-Host "[!] Algunos prerequisitos no se pudieron instalar automaticamente." -ForegroundColor Yellow
         Write-Host "   Instalalos manualmente y volve a ejecutar este script.`n" -ForegroundColor Yellow
@@ -141,12 +141,16 @@ function Test-Prerequisites {
 
 # ── CHECK MODE ────────────────────────────────
 function Start-CheckOnly {
-    Write-Host "`n  [CHECK MODE] Solo diagnositco - no se instalara nada.`n" -ForegroundColor Cyan
-    $allOk = Test-Prerequisites
+    Write-Host "`n  [CHECK MODE] Solo diagnostico - no se instalara nada.`n" -ForegroundColor Cyan
+
+    if (-not $script:PrereqResults) {
+        $null = Test-Prerequisites
+    }
+
     Write-Host "`n  Resumen del check:" -ForegroundColor Cyan
-    Write-Host "  git:  $(if ($results['git'])  { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['git'])  { 'Green' } else { 'Red' })
-    Write-Host "  gh:   $(if ($results['gh'])   { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['gh'])   { 'Green' } else { 'Red' })
-    Write-Host "  node: $(if ($results['node']) { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($results['node']) { 'Green' } else { 'Red' })
+    Write-Host "  git:  $(if ($script:PrereqResults['git'])  { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['git'])  { 'Green' } else { 'Red' })
+    Write-Host "  gh:   $(if ($script:PrereqResults['gh'])   { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['gh'])   { 'Green' } else { 'Red' })
+    Write-Host "  node: $(if ($script:PrereqResults['node']) { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['node']) { 'Green' } else { 'Red' })
     $codeCmd = Get-Command "code" -ErrorAction SilentlyContinue
     Write-Host "  code: $(if ($codeCmd) { 'OK' } else { 'OPCIONAL' })" -ForegroundColor $(if ($codeCmd) { 'Green' } else { 'Yellow' })
     $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
@@ -157,12 +161,54 @@ function Start-CheckOnly {
 
 # ── DRY-RUN MODE ──────────────────────────────
 function Start-DryRun {
-    Write-Host "`n  [DRY-RUN MODE] Simulando configuracion... no se modificara nada.`n" -ForegroundColor Cyan
+    Write-Host "`n  [DRY-RUN] Plan de instalacion - nada se modificara.`n" -ForegroundColor Cyan
 
-    $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
-    $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
-    . $resolvedPath
-    Start-Wizard
+    # Detectar estado de cada componente
+    $gitOk     = Get-Command "git" -ErrorAction SilentlyContinue
+    $ghOk      = Get-Command "gh" -ErrorAction SilentlyContinue
+    $nodeOk    = Get-Command "node" -ErrorAction SilentlyContinue
+    $codeOk    = Get-Command "code" -ErrorAction SilentlyContinue
+    $engramOk  = Get-Command "engram" -ErrorAction SilentlyContinue
+    $opencodeOk = Get-Command "opencode" -ErrorAction SilentlyContinue
+    $gaDir     = Test-Path (Join-Path $HOME "gentle-ai")
+    $skillsDir = Test-Path (Join-Path $env:APPDATA "opencode\skills\Gentleman-Skills")
+    $ggaDir    = Test-Path (Join-Path $HOME "gentleman-guardian-angel")
+    $ghUser    = & gh api user --jq .login 2>$null
+    $engramRepo = Test-Path (Join-Path $HOME "engram-memories")
+    $configRepo = Test-Path (Join-Path $HOME "opencode-config")
+
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  |               PLAN DE INSTALACION                    |" -ForegroundColor Cyan
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  | Prerequisites:                                       |" -ForegroundColor Cyan
+    Write-Host "  |   git:       $(if ($gitOk) { 'OK' } else { 'FALTA' })                                         |"
+    Write-Host "  |   gh:        $(if ($ghOk) { 'OK' } else { 'FALTA' })                                         |"
+    Write-Host "  |   node:      $(if ($nodeOk) { 'OK' } else { 'FALTA' })                                         |"
+    Write-Host "  |   opencode:  $(if ($opencodeOk) { 'OK' } else { 'FALTA - instalarlo primero' })                |"
+    Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
+    Write-Host "  | Componentes a instalar/configurar:                    |" -ForegroundColor Cyan
+    if ($gaDir)    { Write-Host "  |   [OK] Gentle AI (ya instalado)                              |" -ForegroundColor Green }
+    else           { Write-Host "  |   [+] Gentle AI (pendiente)                                  |" -ForegroundColor Yellow }
+    if ($skillsDir){ Write-Host "  |   [OK] Gentleman Skills (ya instalado)                        |" -ForegroundColor Green }
+    else           { Write-Host "  |   [+] Gentleman Skills (pendiente)                            |" -ForegroundColor Yellow }
+    if ($engramOk) { Write-Host "  |   [OK] Engram (ya instalado)                                  |" -ForegroundColor Green }
+    else           { Write-Host "  |   [+] Engram (pendiente)                                      |" -ForegroundColor Yellow }
+    if ($codeOk)   { Write-Host "  |   [OK] VSCode (ya instalado)                                  |" -ForegroundColor Green }
+    else           { Write-Host "  |   [?] VSCode (opcional - recomendado)                         |" -ForegroundColor Yellow }
+    if ($ggaDir)   { Write-Host "  |   [OK] GGA code review (ya instalado)                         |" -ForegroundColor Green }
+    else           { Write-Host "  |   [?] GGA code review (opcional)                              |" -ForegroundColor Gray }
+    Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
+    Write-Host "  | Repositorios GitHub:                                 |" -ForegroundColor Cyan
+    if ($ghUser)   { Write-Host "  |   Usuario: $($ghUser.PadRight(44))|" }
+    else           { Write-Host "  |   gh no autenticado - se pedira login                          |" -ForegroundColor Yellow }
+    if ($engramRepo){Write-Host "  |   [OK] engram-memories (local)                                |" -ForegroundColor Green }
+    else            {Write-Host "  |   [+] engram-memories (se creara)                              |" -ForegroundColor Yellow }
+    if ($configRepo){Write-Host "  |   [OK] opencode-config (local)                                |" -ForegroundColor Green }
+    else            {Write-Host "  |   [+] opencode-config (se creara)                             |" -ForegroundColor Yellow }
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  | Sync: cada 30 min via Task Scheduler                  |" -ForegroundColor Cyan
+    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
+
     Write-Host "`n  [DRY-RUN] Simulacion completada. Nada se instalo ni modifico." -ForegroundColor Cyan
     Write-Host "  Para instalar de verdad, ejecuta .\bootstrap.ps1 sin parametros.`n" -ForegroundColor Cyan
 }
@@ -198,6 +244,18 @@ function Main {
     Show-Banner
     if (-not (Test-WindowsOS)) { exit 1 }
     $null = Test-AdminRights
+
+    # Check-only mode: skip prereq install, just report
+    if ($script:IsCheckOnly) { Start-CheckOnly; return }
+
+    # Dry-run mode: check prereqs but don't block on missing
+    if ($script:IsDryRun) {
+        if (-not $script:PrereqResults) { $null = Test-Prerequisites }
+        Start-DryRun
+        return
+    }
+
+    # Normal mode: prereqs must be satisfied
     if (-not (Test-Prerequisites)) {
         Write-Host "Resolve los prerequisitos faltantes y volve a ejecutar el script.`n" -ForegroundColor Yellow
         exit 1

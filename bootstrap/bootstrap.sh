@@ -202,10 +202,83 @@ check_only() {
 # =============================================================================
 dry_run() {
     echo ""
-    title "  [DRY-RUN MODE] Simulando configuración... no se modificará nada."
+    title "  [DRY-RUN] Plan de instalación — nada se modificará."
     echo ""
-    source "$(dirname "$0")/../modules/wizard-core.sh"
-    wizard_main
+
+    # Detectar estado de cada componente
+    local git_ok="FALTA" gh_ok="FALTA" node_ok="FALTA" code_ok="FALTA"
+    local engram_ok="FALTA" opencode_ok="FALTA" ga_ok="NO" skills_ok="NO" gga_ok="NO"
+    local engram_repo_ok="NO" config_repo_ok="NO" gh_user=""
+
+    command -v git &>/dev/null && git_ok="OK"
+    command -v gh &>/dev/null && gh_ok="OK"
+    command -v node &>/dev/null && node_ok="OK"
+    command -v code &>/dev/null && code_ok="OK"
+    command -v engram &>/dev/null && engram_ok="OK"
+    command -v opencode &>/dev/null && opencode_ok="OK"
+    [[ -d "$HOME/gentle-ai" ]] && ga_ok="OK"
+    [[ -d "$HOME/.config/opencode/skills/gentleman-skills" ]] && skills_ok="OK"
+    [[ -d "$HOME/gentleman-guardian-angel" ]] && gga_ok="OK"
+    [[ -d "$HOME/engram-memories" ]] && engram_repo_ok="OK"
+    [[ -d "$HOME/opencode-config" ]] && config_repo_ok="OK"
+    gh auth status &>/dev/null && gh_user="$(gh api user --jq .login 2>/dev/null || echo '")'"
+
+    echo "  +------------------------------------------------------+"
+    echo -e "  ${CYAN}|               PLAN DE INSTALACION                    |${RESET}"
+    echo "  +------------------------------------------------------+"
+    echo -e "  ${CYAN}| Prerequisites:                                       |${RESET}"
+    echo -e "  |   git:       $(printf '%-4s' "$git_ok")                                            |"
+    echo -e "  |   gh:        $(printf '%-4s' "$gh_ok")                                            |"
+    echo -e "  |   node:      $(printf '%-4s' "$node_ok")                                            |"
+    echo -e "  |   opencode:  $(printf '%-4s' "$opencode_ok")                                        |"
+    echo "  |------------------------------------------------------|"
+    echo -e "  ${CYAN}| Componentes a instalar/configurar:                    |${RESET}"
+    if [[ "$ga_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} Gentle AI (ya instalado)                              |"
+    else
+        echo -e "  |   ${YELLOW}[+]${RESET} Gentle AI (pendiente)                                  |"
+    fi
+    if [[ "$skills_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} Gentleman Skills (ya instalado)                        |"
+    else
+        echo -e "  |   ${YELLOW}[+]${RESET} Gentleman Skills (pendiente)                            |"
+    fi
+    if [[ "$engram_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} Engram (ya instalado)                                  |"
+    else
+        echo -e "  |   ${YELLOW}[+]${RESET} Engram (pendiente)                                      |"
+    fi
+    if [[ "$code_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} VSCode (ya instalado)                                  |"
+    else
+        echo -e "  |   ${YELLOW}[?]${RESET} VSCode (opcional - recomendado)                         |"
+    fi
+    if [[ "$gga_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} GGA code review (ya instalado)                         |"
+    else
+        echo -e "  |   ${GRAY}[?]${RESET} GGA code review (opcional)                              |"
+    fi
+    echo "  |------------------------------------------------------|"
+    echo -e "  ${CYAN}| Repositorios GitHub:                                 |${RESET}"
+    if [[ -n "$gh_user" ]]; then
+        printf "  |   Usuario: %-44s |\n" "$gh_user"
+    else
+        echo -e "  |   ${YELLOW}gh no autenticado - se pedira login                          |${RESET}"
+    fi
+    if [[ "$engram_repo_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} engram-memories (local)                                |"
+    else
+        echo -e "  |   ${YELLOW}[+]${RESET} engram-memories (se creara)                              |"
+    fi
+    if [[ "$config_repo_ok" == "OK" ]]; then
+        echo -e "  |   ${GREEN}[OK]${RESET} opencode-config (local)                                |"
+    else
+        echo -e "  |   ${YELLOW}[+]${RESET} opencode-config (se creara)                             |"
+    fi
+    echo "  +------------------------------------------------------+"
+    echo -e "  ${CYAN}| Sync: cada 30 min via crontab                         |${RESET}"
+    echo "  +------------------------------------------------------+"
+
     echo ""
     info "Simulación completada. Nada se instaló ni modificó."
     info "Para instalar de verdad, corre ./bootstrap.sh sin parámetros."

@@ -36,6 +36,18 @@ function Set-Progress {
     Write-Progress -Activity "Lara Diaries - Configuracion" -Status $label -CurrentOperation $Status -PercentComplete $pct
 }
 
+# ── DRY-RUN HELPERS ──────────────────────────
+function Read-HostOrDefault {
+    param([string]$Prompt, [string]$Default = "")
+    if ($script:IsDryRun) {
+        Write-Host "  $Prompt [$Default] (dry-run, usando default)" -ForegroundColor Gray
+        return $Default
+    }
+    $input = Read-Host "  $Prompt"
+    if ([string]::IsNullOrWhiteSpace($input)) { return $Default }
+    return $input.Trim()
+}
+
 # ── 1. GITHUB LOGIN ──────────────────────────
 function Invoke-GitHubLogin {
     Write-Step "Paso 1/10 - Login de GitHub"
@@ -337,12 +349,12 @@ $script:IsDryRun = if ($script:IsDryRun -eq $true) { $true } else { $false }
 function Write-Status {
     param([string]$Component, [string]$Status)
     $icon = switch ($Status) {
-        "INSTALADO"  { "✅" }
-        "INSTALAR"   { "⬇️ " }
-        "OMITIDO"    { "⏭️ " }
-        "OPCIONAL"   { "🔧" }
-        "ERROR"      { "❌" }
-        default      { "❓" }
+        "INSTALADO"  { "[OK]" }
+        "INSTALAR"   { "[+]" }
+        "OMITIDO"    { "[-]" }
+        "OPCIONAL"   { "[?]" }
+        "ERROR"      { "[!]" }
+        default      { "[?]" }
     }
     if ($script:IsDryRun) {
         Write-Host "  $icon [$Status] $Component" -ForegroundColor $(if ($Status -eq "INSTALADO") { 'Green' } elseif ($Status -eq "INSTALAR") { 'Yellow' } else { 'Gray' })
@@ -705,11 +717,18 @@ function Show-Summary {
 function Start-Wizard {
     Write-Host "`n"
     Write-Host "+---------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "|        ASISTENTE DE CONFIGURACION            |" -ForegroundColor Magenta
-    Write-Host "|     Te voy a hacer 10 preguntas              |" -ForegroundColor Magenta
+    if ($script:IsDryRun) {
+        Write-Host "|     MODO SIMULACION (DRY-RUN)              |" -ForegroundColor Yellow
+        Write-Host "|     Usando valores predeterminados         |" -ForegroundColor Yellow
+    } else {
+        Write-Host "|        ASISTENTE DE CONFIGURACION            |" -ForegroundColor Magenta
+        Write-Host "|     Te voy a hacer 10 preguntas              |" -ForegroundColor Magenta
+    }
     Write-Host "+---------------------------------------------+" -ForegroundColor Magenta
-    Write-Host "  Responde con el numero de opcion." -ForegroundColor Gray
-    Write-Host "  Los valores predeterminados estan entre parentesis.`n" -ForegroundColor Gray
+    if (-not $script:IsDryRun) {
+        Write-Host "  Responde con el numero de opcion." -ForegroundColor Gray
+        Write-Host "  Los valores predeterminados estan entre parentesis.`n" -ForegroundColor Gray
+    }
 
     try {
         Set-Progress -Step 0 -Status "Login GitHub..."
@@ -743,7 +762,11 @@ function Start-Wizard {
         Show-Summary
 
         Write-Progress -Activity "Lara Diaries" -Completed
-        Write-Host "  Gracias por usar Lara Diaries." -ForegroundColor Cyan
+        if ($script:IsDryRun) {
+            Write-Host "  [DRY-RUN] Simulacion completada. Nada se instalo." -ForegroundColor Yellow
+        } else {
+            Write-Host "  Gracias por usar Lara Diaries." -ForegroundColor Cyan
+        }
         Write-Host ""
     } catch {
         Write-Progress -Activity "Lara Diaries" -Completed
