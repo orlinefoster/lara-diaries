@@ -26,31 +26,40 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 - **Windows 10/11** o **Linux** (Ubuntu, Fedora, Arch, o derivados)
 - Conexión a internet
 - Una cuenta de **GitHub** (gratis)
+- `git`, `gh` (GitHub CLI), y `node` (Node.js) instalados — abajo te digo cómo
 
 **No necesitás saber programar.** Si llegaste hasta acá, ya está.
 
-> 💡 **Si es una PC nueva o recién formateada**, puede que falten herramientas básicas. No te preocupes — el instalador de Lara detecta lo que falta y te guía para instalarlo. En particular: `git`, `curl` (Linux), y `winget` (Windows) son necesarios.
+> 💡 **Si es una PC nueva o recién formateada**, puede que falten herramientas básicas. No te preocupes — el instalador de Lara detecta lo que falta y te guía. Pero mejor tenerlo listo antes.
 
 ---
 
 ## 🚀 Instalación (3 pasos)
 
-### Paso 1: Instalá opencode
+### Paso 1: Instalá las herramientas necesarias
 
-> opencode es el "motor" que hace funcionar a Lara.
+> opencode es el "motor" que hace funcionar a Lara. Además necesita `git`, `gh` (GitHub CLI) y `node` (Node.js).
 
 **Windows:**
-```
-winget install OpenCode
+Abrí PowerShell como Administrador y ejecutá:
+```powershell
+winget install OpenCode Git.Git GitHub.cli OpenJS.NodeJS.LTS
 ```
 
-**Linux:**
+> Si algún `winget install` falla, instalalo manualmente desde la web.
+
+**Linux (Ubuntu/Debian):**
 ```bash
+sudo apt update
+sudo apt install git gh nodejs curl -y
 curl -fsSL https://opencode.ai/install | bash
 ```
 
-> Si `winget` no funciona en Windows, bajalo de [opencode.ai](https://opencode.ai) y ejecutá el installer.
-> En Linux, si `curl` no está instalado, probá con: `sudo apt install curl` (Ubuntu/Debian) o `sudo dnf install curl` (Fedora).
+**Linux (Fedora):**
+```bash
+sudo dnf install git gh nodejs curl -y
+curl -fsSL https://opencode.ai/install | bash
+```
 
 ### Paso 2: Cloná este repositorio
 
@@ -61,7 +70,7 @@ cd lara-diaries
 
 > 💡 **Tip**: Si no sabés qué es "git" o "terminal", no te preocupes. Abrí PowerShell (Windows) o Terminal (Linux) y pegá los comandos de arriba, uno por uno.
 >
-> 💡 **Si `git` no está instalado**: en Windows instalalo con `winget install Git.Git`, en Linux con `sudo apt install git` (Ubuntu) o `sudo dnf install git` (Fedora).
+> 💡 Si ya instalaste todo en el Paso 1, ya tenés `git` listo.
 
 ### Paso 3: Iniciá la magia
 
