@@ -433,8 +433,25 @@ install_components() {
         else
             if git clone https://github.com/Gentleman-Programming/gentle-ai.git "$HOME/gentle-ai"; then
                 log_info "gentle-ai cloned."
-                if [[ -f "$HOME/gentle-ai/install.sh" ]]; then
-                    bash "$HOME/gentle-ai/install.sh" || log_warn "gentle-ai installer reported issues."
+
+                # The installer is in scripts/, not the repo root
+                local ga_installer=""
+                if [[ -f "$HOME/gentle-ai/scripts/install.sh" ]]; then
+                    ga_installer="$HOME/gentle-ai/scripts/install.sh"
+                elif [[ -f "$HOME/gentle-ai/install.sh" ]]; then
+                    ga_installer="$HOME/gentle-ai/install.sh"
+                fi
+
+                if [[ -n "$ga_installer" ]]; then
+                    bash "$ga_installer" || log_warn "gentle-ai installer reported issues."
+                else
+                    # Fallback: run the gentle-ai binary directly if it exists
+                    if command -v gentle-ai &>/dev/null; then
+                        gentle-ai install 2>/dev/null || log_warn "gentle-ai install command failed."
+                    else
+                        log_warn "gentle-ai installer script not found at scripts/install.sh"
+                        log_info "Run 'bash $HOME/gentle-ai/scripts/install.sh' manually."
+                    fi
                 fi
             else
                 log_error "Failed to clone gentle-ai. Check internet connection."
@@ -473,18 +490,103 @@ install_components() {
     elif [[ $engram_status -eq 2 ]]; then
         : # dry-run
     else
-        local engram_installer="/tmp/engram-install-$$.sh"
-        if curl -fsSL https://engram.gg/install.sh -o "$engram_installer"; then
-            if bash "$engram_installer"; then
-                log_info "Engram installed successfully."
+        log_info "Installing Engram from official sources..."
+        local engram_ok=false
+
+        # Priority 1: Binary download from GitHub Releases (zero deps — just curl + tar)
+        if [[ "$engram_ok" != "true" ]]; then
+            log_info "Downloading Engram binary from GitHub Releases..."
+            local engram_tmpdir="/tmp/engram-install-$$"
+            mkdir -p "$engram_tmpdir"
+            trap '[ -n "${engram_tmpdir:-}" ] && rm -rf "$engram_tmpdir"' EXIT
+
+            local engram_latest_url="https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
+            local engram_response
+            engram_response="$(curl -sL -w "\n%{http_code}" "$engram_latest_url")"
+            local engram_http_code
+            engram_http_code="$(echo "$engram_response" | tail -n1)"
+            local engram_body
+            engram_body="$(echo "$engram_response" | sed '$d')"
+
+            if [[ "$engram_http_code" == "200" ]]; then
+                local engram_tag
+                engram_tag="$(echo "$engram_body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+                local engram_version="${engram_tag#v}"
+                local engram_os_arch="linux_amd64"
+                [[ "$(uname -s)" == "Darwin" ]] && engram_os_arch="darwin_amd64"
+                [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && engram_os_arch="${engram_os_arch%_*}_arm64"
+
+                local engram_archive="engram_${engram_version}_${engram_os_arch}.tar.gz"
+                local engram_dl_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/${engram_archive}"
+                local engram_checksums_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/checksums.txt"
+
+                log_info "Downloading ${engram_archive}..."
+                if curl -sfL -o "${engram_tmpdir}/${engram_archive}" "$engram_dl_url"; then
+                    # Verify checksum
+                    if curl -sL -o "${engram_tmpdir}/checksums.txt" "$engram_checksums_url"; then
+                        local engram_expected
+                        engram_expected="$(grep "${engram_archive}" "${engram_tmpdir}/checksums.txt" | awk '{print $1}')"
+                        local engram_actual
+                        if command -v sha256sum &>/dev/null; then
+                            engram_actual="$(sha256sum "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
+                        elif command -v shasum &>/dev/null; then
+                            engram_actual="$(shasum -a 256 "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
+                        fi
+                        if [[ -n "$engram_expected" && -n "$engram_actual" && "$engram_expected" == "$engram_actual" ]]; then
+                            log_info "Checksum verified."
+                        else
+                            log_warn "Checksum verification skipped or mismatch."
+                        fi
+                    fi
+
+                    # Extract and install
+                    tar -xzf "${engram_tmpdir}/${engram_archive}" -C "$engram_tmpdir"
+                    local engram_install_dir="${HOME}/.local/bin"
+                    mkdir -p "$engram_install_dir"
+                    if cp "${engram_tmpdir}/engram" "$engram_install_dir/engram" 2>/dev/null; then
+                        chmod +x "$engram_install_dir/engram"
+                        if [[ ":$PATH:" == *":${engram_install_dir}:"* ]]; then
+                            log_info "Engram installed to ${engram_install_dir}/engram"
+                        else
+                            log_info "Engram installed to ${engram_install_dir}/engram (add to PATH)"
+                        fi
+                        engram_ok=true
+                    else
+                        log_warn "Could not copy engram binary to ${engram_install_dir}."
+                    fi
+                else
+                    log_warn "Failed to download Engram binary."
+                fi
             else
-                log_error "Engram installer script failed."
-                rm -f "$engram_installer"
-                return 1
+                log_warn "GitHub API returned HTTP ${engram_http_code} (rate limited?)."
             fi
-            rm -f "$engram_installer"
-        else
-            log_error "Failed to download Engram installer. Check internet connection."
+        fi
+
+        # Priority 2: Homebrew (if user already has it)
+        if [[ "$engram_ok" != "true" ]] && command -v brew &>/dev/null; then
+            log_info "Homebrew found — installing via brew tap..."
+            if brew tap Gentleman-Programming/homebrew-tap 2>/dev/null && brew install engram 2>/dev/null; then
+                log_info "Engram installed via Homebrew."
+                engram_ok=true
+            else
+                log_warn "Homebrew install failed, trying fallback..."
+            fi
+        fi
+
+        # Priority 3: go install (if Go toolchain is available)
+        if [[ "$engram_ok" != "true" ]] && command -v go &>/dev/null; then
+            log_info "Falling back to go install..."
+            if go install github.com/Gentleman-Programming/engram/cmd/engram@latest 2>/dev/null; then
+                log_info "Engram installed via go install."
+                engram_ok=true
+            else
+                log_warn "go install failed."
+            fi
+        fi
+
+        if [[ "$engram_ok" != "true" ]]; then
+            log_error "Could not install Engram."
+            log_info "Install manually: https://github.com/Gentleman-Programming/engram#quick-start"
             return 1
         fi
     fi
@@ -617,7 +719,6 @@ install_components() {
             # Read agent prompts for embedding into config
             local lara_plan_prompt=""
             local lara_vip_prompt=""
-            local gentle_orch_prompt=""
             if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
                 lara_plan_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-plan.md")"
             fi
@@ -625,49 +726,72 @@ install_components() {
                 lara_vip_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-vip.md")"
             fi
 
-            # Copy template, replace simple placeholders
-            cp "$templates_dir/configs/opencode.json" /tmp/opencode-$$.json
+            local opencode_output="/tmp/opencode-$$.json"
+            local opencode_generated=false
 
-            sed -i \
-                -e "s|{{HOME}}|$HOME|g" \
-                -e "s|{{GITHUB_USER}}|$GITHUB_USER|g" \
-                -e "s|{{ENGRAM_PATH}}|$engram_path|g" \
-                -e "s|{{OPENCODE_CONFIG_DIR}}|$OPENCODE_CONFIG_DIR|g" \
-                -e "s|{{GIT_COMMIT_LEVEL}}|$git_commit_level|g" \
-                -e "s|{{GIT_PUSH_LEVEL}}|$git_push_level|g" \
-                /tmp/opencode-$$.json
-
-            # Embed multi-line prompts using Python for proper JSON escaping (fallback to sed)
+            # Method 1: python3 — full JSON manipulation (escaping, structure, multi-line)
             if command -v python3 &>/dev/null; then
-                if [[ -n "$lara_plan_prompt" ]]; then
-                    local escaped_plan
-                    escaped_plan="$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$lara_plan_prompt")"
-                    # Remove the surrounding quotes that json.dumps adds — they go into JSON directly
-                    # Actually, json.dumps adds quotes. We want the raw JSON string value (with quotes).
-                    # sed expects the replacement to be the JSON string literal, which includes surrounding quotes.
-                    # So escaped_plan = "\"multi\\nline\\nstring\"", and we use it as-is in sed.
-                    sed -i "s|{{LARA_PLAN_PROMPT}}|$escaped_plan|g" /tmp/opencode-$$.json
-                fi
-                if [[ -n "$lara_vip_prompt" ]]; then
-                    local escaped_vip
-                    escaped_vip="$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "$lara_vip_prompt")"
-                    sed -i "s|{{LARA_VIP_PROMPT}}|$escaped_vip|g" /tmp/opencode-$$.json
-                fi
-                # Remove the gentle-orchestrator placeholder (not used in bootstrap)
-                sed -i '/{{GENTLE_ORCHESTRATOR_PROMPT}}/d' /tmp/opencode-$$.json
-            else
-                log_warn "python3 not found — agent prompts will not be embedded in config."
-                log_warn "Edit $OPENCODE_CONFIG_DIR/opencode.json manually to add prompts."
-                sed -i \
-                    -e "s/{{LARA_PLAN_PROMPT}}//g" \
-                    -e "s/{{LARA_VIP_PROMPT}}//g" \
-                    -e '/{{GENTLE_ORCHESTRATOR_PROMPT}}/d' \
-                    /tmp/opencode-$$.json
+                ENGRAM_BIN="$engram_path" \
+                GIT_COMMIT="$git_commit_level" \
+                GIT_PUSH="$git_push_level" \
+                LARA_PLAN_PROMPT="${lara_plan_prompt}" \
+                LARA_VIP_PROMPT="${lara_vip_prompt}" \
+                python3 -c "
+import json, os
+
+with open('$templates_dir/configs/opencode.json') as f:
+    data = json.load(f)
+
+# MCP engram command path
+if os.environ.get('ENGRAM_BIN'):
+    data['mcp']['engram']['command'][0] = os.environ['ENGRAM_BIN']
+
+# Git permission levels
+git_commit = os.environ.get('GIT_COMMIT', 'ask')
+git_push = os.environ.get('GIT_PUSH', 'ask')
+data['permission']['bash']['git commit *'] = git_commit
+data['permission']['bash']['git push'] = git_push
+data['permission']['bash']['git push *'] = git_push
+
+# Agent prompts (multi-line, properly escaped by json.dumps)
+if os.environ.get('LARA_PLAN_PROMPT'):
+    data['agent']['lara-plan']['prompt'] = os.environ['LARA_PLAN_PROMPT']
+if os.environ.get('LARA_VIP_PROMPT'):
+    data['agent']['lara-vip']['prompt'] = os.environ['LARA_VIP_PROMPT']
+
+# Remove gentle-orchestrator (not used in bootstrap, template placeholder only)
+data['agent'].pop('gentle-orchestrator', None)
+
+with open('$opencode_output', 'w') as f:
+    json.dump(data, f, indent=2)
+" && opencode_generated=true
             fi
 
-            mkdir -p "$OPENCODE_CONFIG_DIR"
-            mv /tmp/opencode-$$.json "$OPENCODE_CONFIG_DIR/opencode.json"
-            log_info "Generated: opencode.json"
+            # Method 2: jq — for simple value replacements (no multi-line prompt support)
+            if [[ "$opencode_generated" != "true" ]] && command -v jq &>/dev/null; then
+                jq \
+                    --arg engram "$engram_path" \
+                    --arg git_commit "$git_commit_level" \
+                    --arg git_push "$git_push_level" \
+                    '.mcp.engram.command[0] = $engram
+                     | .permission.bash."git commit *" = $git_commit
+                     | .permission.bash."git push" = $git_push
+                     | .permission.bash."git push *" = $git_push
+                     | del(.agent."gentle-orchestrator")
+                     | .agent."lara-plan".prompt = (.agent."lara-plan".prompt | gsub("{{LARA_PLAN_PROMPT}}"; ""))
+                     | .agent."lara-vip".prompt = (.agent."lara-vip".prompt | gsub("{{LARA_VIP_PROMPT}}"; ""))' \
+                    "$templates_dir/configs/opencode.json" > "$opencode_output" 2>/dev/null && opencode_generated=true
+            fi
+
+            if [[ "$opencode_generated" == "true" ]]; then
+                mkdir -p "$OPENCODE_CONFIG_DIR"
+                mv "$opencode_output" "$OPENCODE_CONFIG_DIR/opencode.json"
+                log_info "Generated: opencode.json"
+            else
+                log_warn "Neither python3 nor jq available — copying template with placeholders."
+                log_warn "Edit $OPENCODE_CONFIG_DIR/opencode.json manually to fill in values."
+                cp "$templates_dir/configs/opencode.json" "$OPENCODE_CONFIG_DIR/opencode.json"
+            fi
         fi
     else
         log_warn "Skipping agent file creation (templates not found)."
@@ -874,45 +998,69 @@ JSONEOF
 # =============================================================================
 # 12. Non-Interactive Wizard (AI-driven)
 # =============================================================================
+# Verify JSON is valid using python3 or jq
+validate_json() {
+    local data="$1"
+    if command -v python3 &>/dev/null; then
+        python3 -c "import sys,json; json.loads(sys.stdin.read())" <<< "$data" 2>/dev/null
+    elif command -v jq &>/dev/null; then
+        jq '.' <<< "$data" >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+# Extract a value from JSON — supports both python3 and jq
+get_json_val() {
+    local key="$1"
+    local default="$2"
+    if [[ "$JSON_PARSER" == "python3" ]]; then
+        python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$key','$default'))" <<< "$JSON_DATA"
+    else
+        jq -r ".$key // \"$default\"" <<< "$JSON_DATA"
+    fi
+}
+
 wizard_noninteractive() {
-    local config_file="$1"
+    local input="$1"
+    JSON_PARSER=""
+    JSON_DATA=""
+
+    # Detect JSON parser
+    if command -v python3 &>/dev/null; then
+        JSON_PARSER="python3"
+    elif command -v jq &>/dev/null; then
+        JSON_PARSER="jq"
+    else
+        log_error "Need python3 or jq to parse JSON config."
+        log_error "Install python3 or jq and re-run."
+        return 1
+    fi
 
     log_title ""
     log_title "⚡ Non-Interactive Setup"
     echo "────────────────────────────────────────"
     echo ""
-    log_info "Loading config from: $config_file"
 
-    if [[ ! -f "$config_file" ]]; then
-        log_error "Config file not found: $config_file"
-        return 1
-    fi
-
-    # Parse JSON config using bash builtins (requires jq or python3)
-    local json_data
-    json_data="$(cat "$config_file")"
-
-    local parse_cmd=""
-    if command -v python3 &>/dev/null; then
-        parse_cmd="python3"
-    elif command -v jq &>/dev/null; then
-        parse_cmd="jq"
+    # Detect whether input is a file path or inline JSON
+    if [[ "${input:0:1}" == "{" ]]; then
+        # Inline JSON string
+        JSON_DATA="$input"
+        log_info "Loading config from inline JSON..."
+    elif [[ -f "$input" ]]; then
+        # File path
+        log_info "Loading config from: $input"
+        JSON_DATA="$(cat "$input")"
     else
-        log_error "Need python3 or jq to parse JSON config."
-        log_error "Install one of them and re-run."
+        log_error "Invalid input: not a file nor JSON: $input"
         return 1
     fi
 
-    # Helper: extract value from JSON
-    get_json_val() {
-        local key="$1"
-        local default="$2"
-        if [[ "$parse_cmd" == "python3" ]]; then
-            python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$key','$default'))" <<< "$json_data"
-        else
-            jq -r ".$key // \"$default\"" <<< "$json_data"
-        fi
-    }
+    # Validate JSON
+    if ! validate_json "$JSON_DATA"; then
+        log_error "Invalid JSON format in config input."
+        return 1
+    fi
 
     # Validate GitHub auth
     if ! gh auth status &>/dev/null; then

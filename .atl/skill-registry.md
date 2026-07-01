@@ -6,9 +6,7 @@ Last updated: 2026-07-01
 
 ## Sources scanned
 
-- C:\Users\gabriela.fozzatti\.config\opencode\skills
-- C:\Users\gabriela.fozzatti\.gemini\skills
-- C:\Users\gabriela.fozzatti\.copilot\skills
+- /home/orline/.config/opencode/skills
 
 ## Contract
 
@@ -20,33 +18,16 @@ Last updated: 2026-07-01
 
 | Skill | Trigger / description | Scope | Path |
 | --- | --- | --- | --- |
-| `ai-sdk-5` | Vercel AI SDK 5 patterns. Trigger: When building AI chat features - breaking changes from v4. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\ai-sdk-5\SKILL.md` |
-| `angular-architecture` | Angular architecture: Scope Rule, project structure, file naming, style guide. Trigger: When structuring Angular projects or deciding where to place components. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\angular\architecture\SKILL.md` |
-| `angular-core` | Angular core patterns: standalone components, signals, inject, control flow, zoneless. Trigger: When creating Angular components, using signals, or setting up zoneless. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\angular\core\SKILL.md` |
-| `angular-forms` | Angular forms: Signal Forms (experimental) and Reactive Forms. Trigger: When working with forms, validation, or form state in Angular. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\angular\forms\SKILL.md` |
-| `angular-performance` | Angular performance: NgOptimizedImage, @defer, lazy loading, SSR. Trigger: When optimizing Angular app performance, images, or lazy loading. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\angular\performance\SKILL.md` |
-| `branch-pr` | Create Gentle AI pull requests with issue-first checks. Trigger: creating, opening, or preparing PRs for review. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\branch-pr\SKILL.md` |
-| `chained-pr` | Trigger: PRs over 400 lines, stacked PRs, review slices. Split oversized changes into chained PRs that protect review focus. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\chained-pr\SKILL.md` |
-| `cognitive-doc-design` | Design docs that reduce cognitive load. Trigger: writing guides, READMEs, RFCs, onboarding, architecture, or review-facing docs. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\cognitive-doc-design\SKILL.md` |
-| `comment-writer` | Write warm, direct collaboration comments. Trigger: PR feedback, issue replies, reviews, Slack messages, or GitHub comments. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\comment-writer\SKILL.md` |
-| `django-drf` | Django REST Framework patterns. Trigger: When building REST APIs with Django - ViewSets, Serializers, Filters. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\django-drf\SKILL.md` |
-| `github-pr` | Create high-quality Pull Requests with conventional commits and proper descriptions. Trigger: When creating PRs, writing PR descriptions, or using gh CLI for pull requests. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\github-pr\SKILL.md` |
-| `go-testing` | Trigger: Go tests, go test coverage, Bubbletea teatest, golden files. Apply focused Go testing patterns. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\go-testing\SKILL.md` |
-| `issue-creation` | Create Gentle AI issues with issue-first checks. Trigger: creating GitHub issues, bug reports, or feature requests. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\issue-creation\SKILL.md` |
-| `jira-epic` | Creates Jira epics for large features following Prowler's standard format. Trigger: When user asks to create an epic, large feature, or multi-task initiative. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\jira-epic\SKILL.md` |
-| `jira-task` | Creates Jira tasks following Prowler's standard format. Trigger: When user asks to create a Jira task, ticket, or issue. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\jira-task\SKILL.md` |
-| `judgment-day` | Trigger: judgment day, dual review, adversarial review, juzgar. Run blind dual review, fix confirmed issues, then re-judge. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\judgment-day\SKILL.md` |
-| `nextjs-15` | Next.js 15 App Router patterns. Trigger: When working with Next.js - routing, Server Actions, data fetching. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\nextjs-15\SKILL.md` |
-| `playwright` | Playwright E2E testing patterns. Trigger: When writing E2E tests - Page Objects, selectors, MCP workflow. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\playwright\SKILL.md` |
-| `pytest` | Pytest testing patterns for Python. Trigger: When writing Python tests - fixtures, mocking, markers. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\pytest\SKILL.md` |
-| `react-19` | React 19 patterns with React Compiler. Trigger: When writing React components - no useMemo/useCallback needed. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\react-19\SKILL.md` |
-| `skill-creator` | Trigger: new skills, agent instructions, documenting AI usage patterns. Create LLM-first skills with valid frontmatter. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\skill-creator\SKILL.md` |
-| `skill-improver` | Trigger: improve skills, audit skills, refactor skills, skill quality. Audit and upgrade existing LLM-first skills. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\skill-improver\SKILL.md` |
-| `tailwind-4` | Tailwind CSS 4 patterns and best practices. Trigger: When styling with Tailwind - cn(), theme variables, no var() in className. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\tailwind-4\SKILL.md` |
-| `typescript` | TypeScript strict patterns and best practices. Trigger: When writing TypeScript code - types, interfaces, generics. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\typescript\SKILL.md` |
-| `work-unit-commits` | Plan commits as reviewable work units. Trigger: implementation, commit splitting, chained PRs, or keeping tests and docs with code. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\work-unit-commits\SKILL.md` |
-| `zod-4` | Zod 4 schema validation patterns. Trigger: When using Zod for validation - breaking changes from v3. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\zod-4\SKILL.md` |
-| `zustand-5` | Zustand 5 state management patterns. Trigger: When managing React state with Zustand. | user | `C:\Users\gabriela.fozzatti\.config\opencode\skills\zustand-5\SKILL.md` |
+| `branch-pr` | Create Gentle AI pull requests with issue-first checks. Trigger: creating, opening, or preparing PRs for review. | user | `/home/orline/.config/opencode/skills/branch-pr/SKILL.md` |
+| `chained-pr` | Trigger: PRs over 400 lines, stacked PRs, review slices. Split oversized changes into chained PRs that protect review focus. | user | `/home/orline/.config/opencode/skills/chained-pr/SKILL.md` |
+| `cognitive-doc-design` | Design docs that reduce cognitive load. Trigger: writing guides, READMEs, RFCs, onboarding, architecture, or review-facing docs. | user | `/home/orline/.config/opencode/skills/cognitive-doc-design/SKILL.md` |
+| `comment-writer` | Write warm, direct collaboration comments. Trigger: PR feedback, issue replies, reviews, Slack messages, or GitHub comments. | user | `/home/orline/.config/opencode/skills/comment-writer/SKILL.md` |
+| `go-testing` | Trigger: Go tests, go test coverage, Bubbletea teatest, golden files. Apply focused Go testing patterns. | user | `/home/orline/.config/opencode/skills/go-testing/SKILL.md` |
+| `issue-creation` | Create Gentle AI issues with issue-first checks. Trigger: creating GitHub issues, bug reports, or feature requests. | user | `/home/orline/.config/opencode/skills/issue-creation/SKILL.md` |
+| `judgment-day` | Trigger: judgment day, dual review, adversarial review, juzgar. Run blind dual review, fix confirmed issues, then re-judge. | user | `/home/orline/.config/opencode/skills/judgment-day/SKILL.md` |
+| `skill-creator` | Trigger: new skills, agent instructions, documenting AI usage patterns. Create LLM-first skills with valid frontmatter. | user | `/home/orline/.config/opencode/skills/skill-creator/SKILL.md` |
+| `skill-improver` | Trigger: improve skills, audit skills, refactor skills, skill quality. Audit and upgrade existing LLM-first skills. | user | `/home/orline/.config/opencode/skills/skill-improver/SKILL.md` |
+| `work-unit-commits` | Plan commits as reviewable work units. Trigger: implementation, commit splitting, chained PRs, or keeping tests and docs with code. | user | `/home/orline/.config/opencode/skills/work-unit-commits/SKILL.md` |
 
 ## Loading protocol
 

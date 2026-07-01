@@ -287,7 +287,8 @@ For fresh installs, omit backup fields:
 }
 ```
 
-Write this JSON to a temp file, then run:
+Write this JSON to a temp file, then run the bootstrap with the config.
+Both platforms accept JSON inline or a file path — no need to handle them differently:
 
 **Windows:**
 ```powershell
@@ -296,6 +297,11 @@ Write this JSON to a temp file, then run:
 
 **Linux:**
 ```bash
+# Option A: JSON inline (no temp file needed)
+./bootstrap/bootstrap.sh --non-interactive '{"pronoun":"she/her",...}'
+
+# Option B: file path
+echo '{"pronoun":"she/her",...}' > /tmp/lara-config.json
 ./bootstrap/bootstrap.sh --non-interactive /tmp/lara-config.json
 ```
 

@@ -594,11 +594,18 @@ function Install-Components {
                 $null = & git clone "https://github.com/Gentleman-Programming/gentle-ai.git" $gaDir 2>&1
                 if ($LASTEXITCODE -eq 0) { Write-Success "Gentle AI clonado en: $gaDir" }
                 else { throw "Error clonando Gentle AI" }
-                $gaInstaller = Join-Path $gaDir "install.ps1"
+                # Try scripts/install.ps1 first (official path), fallback to root
+                $gaInstaller = Join-Path $gaDir "scripts\install.ps1"
+                if (-not (Test-Path -LiteralPath $gaInstaller)) {
+                    $gaInstaller = Join-Path $gaDir "install.ps1"
+                }
                 if (Test-Path -LiteralPath $gaInstaller) {
                     Write-Info "Ejecutando instalador de Gentle AI..."
                     $null = & $gaInstaller 2>&1
                     Write-Success "Instalador ejecutado."
+                } else {
+                    Write-Warn "Installer script not found. Try: scoop bucket add gentleman https://github.com/Gentleman-Programming/scoop-bucket"
+                    Write-Warn "Then: scoop install gentle-ai"
                 }
             }
     } else {
@@ -626,13 +633,74 @@ function Install-Components {
     $null = Install-Component -Name "Engram (memoria persistente)" `
         -CheckBlock { Get-Command "engram" -ErrorAction SilentlyContinue } `
         -InstallBlock {
-            $winget = Get-Command "winget" -ErrorAction SilentlyContinue
-            if ($winget) {
-                $null = & winget install "engram" --accept-source-agreements --accept-package-agreements 2>&1
-                $reCheck = Get-Command "engram" -ErrorAction SilentlyContinue
-                if (-not $reCheck) { throw "No se pudo instalar engram con winget." }
-            } else {
-                throw "winget no disponible. Descarga desde: https://github.com/Gentleman-Programming/engram/releases"
+            $engramOk = $false
+
+            # Priority 1: Download from GitHub Releases (zero deps — just PowerShell)
+            Write-Info "Downloading Engram from GitHub Releases..."
+            try {
+                $releasesUrl = "https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
+                $releaseInfo = Invoke-RestMethod -Uri $releasesUrl -ErrorAction Stop
+                $tag = $releaseInfo.tag_name
+                $version = $tag.TrimStart('v')
+
+                # Detect architecture
+                $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "arm64" }
+                $archiveName = "engram_${version}_windows_${arch}.zip"
+
+                $dlUrl = "https://github.com/Gentleman-Programming/engram/releases/download/${tag}/${archiveName}"
+                $tmpDir = Join-Path $env:TEMP "engram-install-$([System.IO.Path]::GetRandomFileName())"
+                $null = New-Item -ItemType Directory -Path $tmpDir -Force
+                $zipPath = Join-Path $tmpDir $archiveName
+
+                Write-Info "Downloading $archiveName ..."
+                Invoke-WebRequest -Uri $dlUrl -OutFile $zipPath -ErrorAction Stop
+
+                # Extract
+                Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
+                $installBinDir = Join-Path $HOME "bin"
+                if (-not (Test-Path -LiteralPath $installBinDir)) {
+                    $null = New-Item -ItemType Directory -Path $installBinDir -Force
+                }
+                Copy-Item -Path (Join-Path $tmpDir "engram.exe") -Destination (Join-Path $installBinDir "engram.exe") -Force
+                Write-Success "Engram installed to: $(Join-Path $installBinDir 'engram.exe')"
+
+                # Cleanup
+                Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                # Check if install dir is in PATH
+                $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+                if ($userPath -notlike "*$installBinDir*") {
+                    Write-Warn "Add $installBinDir to your PATH to use 'engram' from anywhere."
+                }
+                $engramOk = $true
+            } catch {
+                Write-Warn "Binary download failed: $_"
+            }
+
+            # Priority 2: go install (if Go toolchain is available)
+            if (-not $engramOk) {
+                $goCmd = Get-Command "go" -ErrorAction SilentlyContinue
+                if ($goCmd) {
+                    Write-Info "Falling back to go install..."
+                    $null = & go install github.com/Gentleman-Programming/engram/cmd/engram@latest 2>&1
+                    $reCheck = Get-Command "engram" -ErrorAction SilentlyContinue
+                    if ($reCheck) {
+                        Write-Success "Engram installed via go install."
+                        $engramOk = $true
+                    } else {
+                        $gopath = & go env GOPATH 2>$null
+                        $gobin = Join-Path $gopath "bin\engram.exe"
+                        if (Test-Path -LiteralPath $gobin) {
+                            Write-Success "Engram installed at: $gobin"
+                            Write-Warn "Add $gopath\bin to your PATH if not already there."
+                            $engramOk = $true
+                        }
+                    }
+                }
+            }
+
+            if (-not $engramOk) {
+                throw "Could not install Engram. Download from: https://github.com/Gentleman-Programming/engram/releases"
             }
         }
 

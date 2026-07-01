@@ -42,3 +42,6 @@ opencode-config/
 
 # ── User Config (generated) ─────────────────
 user-profile.json
+
+# ── External reference repos (dev only) ─────
+external/

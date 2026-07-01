@@ -26,9 +26,21 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 - **Windows 10/11** o **Linux** (Ubuntu, Fedora, Arch, o derivados)
 - Conexión a internet
 - Una cuenta de **GitHub** (gratis)
-- `git`, `gh` (GitHub CLI), y `node` (Node.js) instalados — abajo te digo cómo
+- **opencode** — el "motor" de Lara (se instala abajo)
+- `git`, `gh` (GitHub CLI), y `curl` (Linux) o PowerShell (Windows, ya viene instalado)
 
 **No necesitás saber programar.** Si llegaste hasta acá, ya está.
+
+### Dependencias que instala Lara automáticamente
+
+| Componente | Método principal (zero deps) | Alternativas (si tenés más herramientas) |
+|-----------|------------------------------|------------------------------------------|
+| **Engram** (memoria) | Descarga directa desde GitHub Releases — solo necesita `curl` (Linux) o PowerShell (Windows) | Homebrew, `go install` |
+| **gentle-ai** (orquestación) | Descarga directa desde GitHub Releases — solo necesita `curl` + `tar` | Homebrew, `go install` |
+| **Gentleman Skills** | `git clone` | — |
+| **VSCode** (opcional) | `winget` (Windows) o `apt`/`dnf`/`pacman` (Linux) | Descarga manual |
+
+> 💡 **No necesitás Homebrew, Go, ni Node.js para los componentes internos.** Lara prioriza siempre el método que funciona en una máquina fresh. Si ya tenés Homebrew o Go instalados, los usa como alternativa.
 
 > 💡 **Si es una PC nueva o recién formateada**, puede que falten herramientas básicas. No te preocupes — el instalador de Lara detecta lo que falta y te guía. Pero mejor tenerlo listo antes.
 

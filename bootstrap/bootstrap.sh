@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lara Diaries — Linux Bootstrap
-# Usage: ./bootstrap.sh [--check] [--dry-run] [--non-interactive <json-file>]
+# Usage: ./bootstrap.sh [--check] [--dry-run] [--non-interactive <json-input>]
+#   <json-input> can be a file path or an inline JSON string (starts with '{')
 #    or: curl -fsSL https://raw.githubusercontent.com/orlinefoster/lara-diaries/main/bootstrap/bootstrap.sh | bash
 set -euo pipefail
 
