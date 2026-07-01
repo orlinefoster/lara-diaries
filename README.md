@@ -29,6 +29,8 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 
 **No necesitás saber programar.** Si llegaste hasta acá, ya está.
 
+> 💡 **Si es una PC nueva o recién formateada**, puede que falten herramientas básicas. No te preocupes — el instalador de Lara detecta lo que falta y te guía para instalarlo. En particular: `git`, `curl` (Linux), y `winget` (Windows) son necesarios.
+
 ---
 
 ## 🚀 Instalación (3 pasos)
@@ -44,10 +46,11 @@ winget install OpenCode
 
 **Linux:**
 ```bash
-curl -fsSL https://opencode.ai/install.sh | sh
+curl -fsSL https://opencode.ai/install | bash
 ```
 
 > Si `winget` no funciona en Windows, bajalo de [opencode.ai](https://opencode.ai) y ejecutá el installer.
+> En Linux, si `curl` no está instalado, probá con: `sudo apt install curl` (Ubuntu/Debian) o `sudo dnf install curl` (Fedora).
 
 ### Paso 2: Cloná este repositorio
 
@@ -57,6 +60,8 @@ cd lara-diaries
 ```
 
 > 💡 **Tip**: Si no sabés qué es "git" o "terminal", no te preocupes. Abrí PowerShell (Windows) o Terminal (Linux) y pegá los comandos de arriba, uno por uno.
+>
+> 💡 **Si `git` no está instalado**: en Windows instalalo con `winget install Git.Git`, en Linux con `sudo apt install git` (Ubuntu) o `sudo dnf install git` (Fedora).
 
 ### Paso 3: Iniciá la magia
 
@@ -73,7 +78,7 @@ O si querés ser más específica:
 
 > **"Baja e inicia este repo https://github.com/orlinefoster/lara-diaries"**
 
-Lara va a tomar el control desde ahí. Te va a hacer **7 preguntas** (cosas como tu nombre, nivel de experiencia, si querés VSCode, etc.) y en **5-10 minutos** vas a tener todo configurado.
+Lara va a tomar el control desde ahí. Te va a hacer algunas preguntas (tu nivel de experiencia, preferencias, si ya tenés una configuración previa que respaldar, etc.) y en **5-10 minutos** vas a tener todo configurado.
 
 ---
 
