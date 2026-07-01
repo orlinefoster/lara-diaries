@@ -1,0 +1,37 @@
+# Engram Sync Configuration
+# Managed by Lara Diaries — do not edit manually
+
+sync:
+  enabled: true
+  interval_minutes: 30
+
+  # Git repository for cross-device memory sync
+  repository:
+    remote: "git@github.com:{{GITHUB_USER}}/engram-memories.git"
+    local_path: "{{HOME}}/engram-memories"
+    branch: main
+    auto_push: true
+    auto_pull: true
+
+  # Paths to synchronize (relative to engram data dir)
+  paths:
+    - "*.db"
+    - "*.json"
+
+  conflict_strategy: "last-write-wins"
+
+  # Backup configuration
+  backup:
+    enabled: true
+    repository:
+      remote: "git@github.com:{{GITHUB_USER}}/opencode-config.git"
+      local_path: "{{HOME}}/opencode-config"
+    paths:
+      - "{{OPENCODE_CONFIG_DIR}}/opencode.json"
+      - "{{OPENCODE_CONFIG_DIR}}/AGENTS.md"
+      - "{{OPENCODE_CONFIG_DIR}}/agents/*.md"
+
+notifications:
+  on_sync_success: false
+  on_sync_failure: true
+  on_conflict: true

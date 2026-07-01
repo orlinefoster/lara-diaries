@@ -1,0 +1,83 @@
+{
+  "version": "1.0.0",
+  "critical": {
+    "network_exposure": {
+      "patterns": [
+        "(router|modem|gateway|192\\.168\\.\\d+\\.\\d+|iptables|ufw|firewall-cmd|nmap)",
+        "(socat|nc\\s+-lv|netcat|telnetd)",
+        "(iptables -P INPUT DROP|ufw default deny)"
+      ],
+      "message": "⛔ Alto — estás por abrir/configurar el router. Si luego olvidás qué hiciste, quedamos expuestas permanentemente.",
+      "severity": "CRITICAL"
+    },
+    "system_integrity": {
+      "patterns": [
+        "(sudo.*passwd|chmod\\s+777|passwd\\s+-d|usermod.*sudo|visudo)",
+        "(systemctl disable.*sudo|rm\\s+/etc/sudoers)",
+        "(dd\\s+if=|mkfs\\.|fdisk.*/dev/sd[a-z])"
+      ],
+      "message": "🚨 No es recomendable hacer esto. Podés corromper el inicio del sistema o dejar la máquina expuesta.",
+      "severity": "CRITICAL"
+    },
+    "credential_exposure": {
+      "patterns": [
+        "(cat.*\\.env|echo.*(API_KEY|SECRET|PASSWORD|TOKEN))",
+        "(printenv|set\\s+SECRET|export.*SECRET)",
+        "(git log -p|git diff HEAD~1)"
+      ],
+      "message": "🔐 Cuidado — esto puede exponer credenciales en el historial de la terminal.",
+      "severity": "CRITICAL"
+    },
+    "destructive_git": {
+      "patterns": [
+        "(git push --force|git push -f|git reset --hard)",
+        "(git rebase --onto|git branch -D|git tag -d)"
+      ],
+      "message": "⚠️ Esto es destructivo en git. Si hay cambios sin pushear, se pierden para siempre.",
+      "severity": "CRITICAL"
+    },
+    "data_loss": {
+      "patterns": [
+        "(rm\\s+-rf\\s+/?$|rm\\s+-rf\\s+/[^ ]*[^/]$)",
+        "(del\\s+/[fps]\\s+|remove-item -recurse)",
+        "(format|diskpart|clean-all)"
+      ],
+      "message": "⚠️ Esto va a borrar datos de forma permanente. ¿Tenés backup?",
+      "severity": "CRITICAL"
+    }
+  },
+  "warning": {
+    "temp_directories": {
+      "patterns": [
+        "(/tmp/|/temp/|C:\\\\Windows\\\\Temp|%TEMP%)",
+        "(mktemp|tempfile)"
+      ],
+      "message": "⚠️ ESPERA — esto opera sobre archivos temporales. Si reiniciás la máquina se pierden.",
+      "severity": "WARNING"
+    },
+    "system_config": {
+      "patterns": [
+        "(/etc/|/sys/|/proc/|HKEY_LOCAL_MACHINE)",
+        "(systemctl|service.*restart|reboot|shutdown)"
+      ],
+      "message": "⚙️ Vas a modificar configuración del sistema. Anotá lo que cambiaste.",
+      "severity": "WARNING"
+    },
+    "bulk_delete": {
+      "patterns": [
+        "(rm\\s+-rf|del.*/s|remove-item.*-recurse)",
+        "(find.*-delete|find.*-exec rm)"
+      ],
+      "message": "📂 Vas a borrar archivos en masa. ¿Estás segura de que no necesitás backup?",
+      "severity": "WARNING"
+    },
+    "port_exposure": {
+      "patterns": [
+        "(ufw allow|iptables -A INPUT -p tcp --dport)",
+        "(netsh advfirewall firewall add rule)"
+      ],
+      "message": "🌐 Vas a abrir puertos. Recordá cerrarlos cuando termines.",
+      "severity": "WARNING"
+    }
+  }
+}

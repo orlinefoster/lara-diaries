@@ -1,0 +1,44 @@
+# ── OS Files ──────────────────────────────────
+Thumbs.db
+.DS_Store
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# ── Editor / IDE ─────────────────────────────
+.vscode/
+.idea/
+*.sublime-*
+*.code-workspace
+
+# ── Dependencies ─────────────────────────────
+node_modules/
+.pnp/
+.pnp.js
+
+# ── Secrets ──────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+*.cert
+credentials.json
+
+# ── Logs / Temp ──────────────────────────────
+*.log
+/tmp/
+/temp/
+out/
+dist/
+
+# ── OS-Specific Script Artifacts ─────────────
+bootstrap/*.exe
+bootstrap/*.msi
+
+# ── Engram ──────────────────────────────────
+engram-memories/
+opencode-config/
+
+# ── User Config (generated) ─────────────────
+user-profile.json

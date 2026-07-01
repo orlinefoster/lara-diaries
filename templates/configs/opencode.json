@@ -1,0 +1,246 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "lara-plan": {
+      "description": "Lara-Plan: Analyst & Planner — architecture, teaching, SDD coordination",
+      "mode": "primary",
+      "permission": {
+        "question": "allow",
+        "task": {
+          "*": "deny",
+          "sdd-apply": "allow",
+          "sdd-archive": "allow",
+          "sdd-design": "allow",
+          "sdd-explore": "allow",
+          "sdd-init": "allow",
+          "sdd-onboard": "allow",
+          "sdd-propose": "allow",
+          "sdd-spec": "allow",
+          "sdd-tasks": "allow",
+          "sdd-verify": "allow"
+        }
+      },
+      "prompt": "{{LARA_PLAN_PROMPT}}",
+      "tools": {
+        "bash": false,
+        "edit": false,
+        "question": true,
+        "read": true,
+        "task": true,
+        "write": false
+      }
+    },
+    "lara-vip": {
+      "description": "Lara-VIP: Hands-on Executor — quick fixes, system ops, memory sync",
+      "mode": "primary",
+      "permission": {
+        "question": "allow",
+        "bash": {
+          "*": "allow"
+        },
+        "read": {
+          "*": "allow"
+        },
+        "write": {
+          "*": "allow"
+        },
+        "edit": {
+          "*": "allow"
+        }
+      },
+      "prompt": "{{LARA_VIP_PROMPT}}",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "question": true,
+        "read": true,
+        "write": true,
+        "webfetch": true,
+        "websearch": true
+      }
+    },
+    "gentle-orchestrator": {
+      "description": "Gentle AI SDD Orchestrator — coordinates sub-agents",
+      "mode": "primary",
+      "permission": {
+        "question": "allow",
+        "task": {
+          "*": "deny",
+          "sdd-apply": "allow",
+          "sdd-archive": "allow",
+          "sdd-design": "allow",
+          "sdd-explore": "allow",
+          "sdd-init": "allow",
+          "sdd-onboard": "allow",
+          "sdd-propose": "allow",
+          "sdd-spec": "allow",
+          "sdd-tasks": "allow",
+          "sdd-verify": "allow"
+        }
+      },
+      "prompt": "{{GENTLE_ORCHESTRATOR_PROMPT}}",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "question": true,
+        "read": true,
+        "task": true,
+        "write": true
+      }
+    },
+    "sdd-apply": {
+      "description": "Implement code changes from task definitions",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the apply phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-archive": {
+      "description": "Archive completed change artifacts",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the archive phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-design": {
+      "description": "Create technical design from proposals",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the design phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-explore": {
+      "description": "Investigate codebase and think through ideas",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the explore phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-init": {
+      "description": "Bootstrap SDD context and project configuration",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the init phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-onboard": {
+      "description": "Guide user through a complete SDD cycle",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the onboard phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-propose": {
+      "description": "Create change proposals from explorations",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the propose phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-spec": {
+      "description": "Write detailed specifications from proposals",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the spec phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-tasks": {
+      "description": "Break down specs and designs into implementation tasks",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the tasks phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    },
+    "sdd-verify": {
+      "description": "Validate implementation against specs",
+      "hidden": true,
+      "mode": "subagent",
+      "prompt": "You are an SDD executor for the verify phase. Do this phase's work yourself. Do NOT delegate.",
+      "tools": {
+        "bash": true,
+        "edit": true,
+        "read": true,
+        "write": true
+      }
+    }
+  },
+  "mcp": {
+    "engram": {
+      "type": "local",
+      "command": ["{{ENGRAM_PATH}}", "mcp", "--tools=agent"]
+    }
+  },
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git commit *": "{{GIT_COMMIT_LEVEL}}",
+      "git push": "{{GIT_PUSH_LEVEL}}",
+      "git push *": "{{GIT_PUSH_LEVEL}}",
+      "git push --force *": "ask",
+      "git rebase *": "ask",
+      "git reset --hard *": "ask"
+    },
+    "read": {
+      "*": "allow",
+      "**/*.key": "deny",
+      "**/*.pem": "deny",
+      "**/.aws/credentials": "deny",
+      "**/.config/gh/hosts.yml": "deny",
+      "**/.credentials/**": "deny",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/.ssh/**": "deny",
+      "**/Library/Keychains/**": "deny",
+      "**/credentials.json": "deny",
+      "**/secrets/**": "deny",
+      "*.env": "deny",
+      "*.env.*": "deny"
+    }
+  },
+  "share": "disabled"
+}
