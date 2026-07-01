@@ -62,180 +62,145 @@ cd ~/lara-diaries
 
 ---
 
-## Phase 2: Run Setup Wizard (Interactive)
+## Phase 2: Diagnose Current State
 
-Source the appropriate wizard module and run the wizard:
+Check what's already installed:
 
 **Windows:**
 ```powershell
-. ./modules/wizard-core.ps1
-Start-Wizard
+.\bootstrap\bootstrap.ps1 -Check
 ```
 
 **Linux:**
 ```bash
-source ./modules/wizard-core.sh
-wizard_main
+./bootstrap/bootstrap.sh --check
 ```
 
-The wizard collects:
+Report the output to the user so they know what's already set up.
 
-1. **GitHub Login** — `gh auth login` if not already authenticated
-2. **Dev Directory** — Where to store projects (suggest: ~/Documents/Develops)
-3. **Gentle AI?** — [Yes/No] Install the full Gentle AI suite?
-4. **Recognition Questions:**
-   - Pronouns: she/her | they/them | he/him | it/its | other
-   - Tech level: full-fearless | me-defiendo | me-invito-un-amigo
-   - Assistance: full | medium | minimal
-5. **Repo Management:**
-   - auto (Lara manages everything)
-   - ask (ask before each commit/push)
-   - manual (user handles git)
-6. **Design Orientation:**
-   - Use design.md? [Yes/No] + brief description
-   - Style preference: clean-ui | pink-kawaii | dark-academia | retro-futuristic | business | full-backend
-7. **Mission:**
-   - personal-important | work | vm | lab-raspberry
+## Phase 3: Ask User (via chat)
 
----
+Use the `question` tool to ask the user ONE QUESTION AT A TIME. Wait for each answer before asking the next.
 
-## Phase 3: Install Components
+### 3.1 GitHub Login
 
-### 3.1 Install Gentle AI
+First, ask the user to authenticate GitHub if needed:
 
-If user chose Yes:
+> "Para sincronizar tus memorias entre dispositivos, necesito acceso a tu GitHub.
+> ¿Ya ejecutaste `gh auth login` en tu terminal?
+> 
+> 1) Sí, ya estoy autenticado
+> 2) No, ayudame a hacerlo"
 
-```bash
-git clone https://github.com/Gentleman-Programming/gentle-ai.git ~/gentle-ai
-cd ~/gentle-ai
-# Run gentle-ai's own installer
+If option 2, guide them to run `gh auth login` in their terminal and confirm when done.
+
+### 3.2 Recognition Questions (ask via question tool)
+
+Present each question separately. The `question` tool options are your list. Pick one question at a time.
+
+**Q1: Pronouns**
+```json
+{
+  "question": "¿Qué pronombres usás para que me refiera a vos?",
+  "options": [
+    {"label": "she/her", "description": "Femenino"},
+    {"label": "they/them", "description": "Neutral"},
+    {"label": "he/him", "description": "Masculino"},
+    {"label": "it/its", "description": "Neutral/objeto"},
+    {"label": "other", "description": "Otro — lo escribo yo"}
+  ]
+}
 ```
 
-Then install Gentleman Skills:
-```bash
-git clone https://github.com/Gentleman-Programming/Gentleman-Skills.git ~/.config/opencode/skills
+**Q2: Tech skill level**
+```json
+{
+  "question": "¿Cuánto sabés de informática?",
+  "options": [
+    {"label": "Full fearless", "description": "Sé lo que hago, dame los detalles técnicos"},
+    {"label": "Me defiendo", "description": "Entiendo conceptos pero pregunto"},
+    {"label": "Me invitó un amigo", "description": "Arranco de CERO, explicame todo"}
+  ]
+}
 ```
 
-### 3.2 Install Engram
-
-```bash
-# Linux
-curl -fsSL https://engram.gg/install.sh | sh
-
-# Windows
-winget install engram
+**Q3: Assistance level**
+```json
+{
+  "question": "¿Cuánta asistencia querés que te dé?",
+  "options": [
+    {"label": "Full", "description": "Explicame todo, no asumas nada"},
+    {"label": "Medium", "description": "Dame un resumen rápido y seguimos"},
+    {"label": "Minimal", "description": "Confío en vos, solo avisame si hay problemas"}
+  ]
+}
 ```
 
-Verify: `engram --version`
+### 3.3 Components to Install
 
-### 3.3 Create Lara Agents
+Ask each YES/NO separately:
 
-Read `templates/agents/lara-plan.md` and `templates/agents/lara-vip.md`.
+- "¿Querés instalar **Gentle AI**? (sistema de orquestación de agentes)"
+- "¿Y los **Gentleman Skills**? (skills para code review, testing, etc.)"
+- "¿Querés **VSCode**? (editor de código, recomendado para principiantes)"  
+- "¿Querés **Gentleman Guardian Angel**? (revisión automática de código en cada commit — opcional avanzado)"
 
-Inject user preferences into templates:
-- Replace `{{PRONOUN}}` with user's pronouns
-- Replace `{{SKILL_LEVEL}}` with user's tech level
-- Replace `{{ASSISTANCE_MODE}}` with user's assistance preference
-- Replace `{{DISCRETION}}` based on mission type
-- Replace `{{STYLE}}` with user's style preference
+### 3.4 Preferences
 
-Write to:
-- Linux: `~/.config/opencode/agents/lara-plan.md`
-- Windows: `%APPDATA%\opencode\agents\lara-plan.md`
+- "¿Cómo manejamos los repos? **Automático** (Lara hace commits), **Preguntar** antes, o **Manual** (vos manejás el git)"
+- "¿Usamos `design.md` para guiar el estilo de los proyectos?"
+- "¿Qué estilo visual te gusta?" (clean-ui | pink-kawaii | dark-academia | retro-futuristic | business | full-backend)
+- "Esta PC es: **Personal** (cuidado máximo), **Trabajo** (moderado), **VM/Lab** (relajado), o **Raspberry Pi** (muy relajado)"
+- "¿Dónde querés guardar tus proyectos?" (sugerir: ~/Documents/Develops)
 
-Create the corresponding agent entries in `opencode.json`.
+## Phase 4: Build Config JSON
 
-### 3.4 Configure Guardian
+After collecting all answers, build the JSON config and run the bootstrap:
 
-Read `guardian/guardian-rules.md` and inject it into the Lara agent prompts as a preamble.
-
-### 3.5 Set Up GitHub Repos
-
-Check if these repos exist in user's GitHub:
-
-1. **`engram-memories`** — for syncing memory across devices
-2. **`opencode-config`** — for backing up agent configuration
-
-For each:
-```bash
-gh repo view <owner>/<repo> 2>/dev/null || gh repo create <repo> --private --description "..."
+```json
+{
+  "pronoun": "<answer>",
+  "skill_level": "<answer>",
+  "assistance_mode": "<answer>",
+  "install_gentle_ai": true,
+  "install_gentleman_skills": true,
+  "install_vscode": true,
+  "install_gga": false,
+  "repo_mode": "auto",
+  "use_design_doc": true,
+  "style": "clean-ui",
+  "mission": "personal-important",
+  "dev_dir": "C:\\Users\\<name>\\Documents\\Develops"
+}
 ```
 
-Clone locally:
-```bash
-git clone git@github.com:<owner>/engram-memories.git ~/engram-memories
-git clone git@github.com:<owner>/opencode-config.git ~/opencode-config
-```
+Write this JSON to a temp file, then run:
 
-### 3.6 First Backup
-
-```bash
-# Copy config files to opencode-config repo
-cp ~/.config/opencode/opencode.json ~/opencode-config/
-cp ~/.config/opencode/AGENTS.md ~/opencode-config/
-# Commit and push
-cd ~/opencode-config && git add . && git commit -m "feat: initial config backup" && git push
-```
-
----
-
-## Phase 4: Set Up Sync
-
-### 4.1 Configure Engram Sync
-
-Read `templates/engram/sync-config.yaml` and write to `~/.config/engram/config.yaml`.
-
-### 4.2 Install Sync Script
-
-Copy `scripts/sync-memories.ps1` or `scripts/sync-memories.sh` to the user's home:
-- `~/lara-sync/sync-memories.ps1` (Windows)
-- `~/lara-sync/sync-memories.sh` (Linux)
-
-### 4.3 Schedule Automatic Sync
-
-**Windows** (Task Scheduler):
+**Windows:**
 ```powershell
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "~/lara-sync/sync-memories.ps1"
-$trigger = New-ScheduledTaskTrigger -Daily -At "09:00" -RepetitionInterval (New-TimeSpan -Minutes 30)
-Register-ScheduledTask -TaskName "Lara-MemorySync" -Action $action -Trigger $trigger
+.\bootstrap\bootstrap.ps1 -NonInteractive '{"pronoun":"she/her",...}'
 ```
 
-**Linux** (crontab):
+**Linux:**
 ```bash
-(crontab -l 2>/dev/null; echo "*/30 * * * * ~/lara-sync/sync-memories.sh") | crontab -
+./bootstrap/bootstrap.sh --non-interactive /tmp/lara-config.json
 ```
 
-Also add a git hook for opencode close events if possible.
+## Phase 5: Verify & Report
 
-### 4.4 Run Initial Sync
+After the non-interactive install completes, verify by running the check again:
+
+```powershell
+.\bootstrap\bootstrap.ps1 -Check
+```
 
 ```bash
-cd ~/engram-memories
-git pull --rebase
-# Copy engram data
-cp ~/.local/share/engram/*.db ~/engram-memories/ 2>/dev/null || true
-git add . && git commit -m "sync: initial memory backup" && git push
+./bootstrap/bootstrap.sh --check
 ```
 
----
+### 5.1 Summary Report
 
-## Phase 5: Finalize
-
-### 5.1 Verify Everything
-
-| Check | Command |
-|-------|---------|
-| opencode works | `opencode --version` |
-| gentle-ai installed | `ls ~/.config/opencode/skills/sdd-*` |
-| engram installed | `engram --version` |
-| Lara agents created | `ls ~/.config/opencode/agents/` |
-| GitHub auth | `gh auth status` |
-| engram-memories repo | `gh repo view <owner>/engram-memories` |
-| Sync scheduled | Check crontab or Task Scheduler |
-
-### 5.2 Summary Report
-
-Print a friendly summary:
+Print a friendly summary to the user:
 ```
 ╔══════════════════════════════════════════════════════╗
 ║           ✅  LARA DIARIES — SETUP COMPLETE         ║
@@ -262,30 +227,18 @@ Print a friendly summary:
     3. O simplemente empezá a codear — yo te sigo!
 ```
 
-### 5.3 Persist User Preferences
-
-Save answers to `~/.config/lara-diaries/user-profile.json`:
-
-```json
-{
-  "pronouns": "she/her",
-  "skill_level": "me-defiendo",
-  "assistance_mode": "full",
-  "repo_management": "auto",
-  "use_design_doc": true,
-  "style": "clean-ui",
-  "mission": "personal-important",
-  "installed_at": "2026-07-01T12:00:00Z",
-  "version": "1.0.0"
-}
-```
-
 ---
 
 ## Important Notes
 
 - **Never run `sudo` without explaining why first**
 - **Never modify system files outside ~/.config without asking**
+- **The bootstrap script handles ALL installation** — you only ask questions and build the config JSON
+- **GitHub login is the ONLY thing the user does in the terminal** — everything else is via chat
+- **Ask ONE question at a time** — wait for the answer before asking the next
+- **Use `question` tool** for multiple-choice questions, not free-form text
+- **Dev directory**: suggest `~/Documents/Develops` unless they have a preference
 - If something fails, give the user a clear error and suggest a fix
-- Keep the user updated: "✅ Git instalado", "⏳ Instalando engram...", etc.
+- Keep the user updated: "✅ Diagnóstico completo", "⏳ Instalando componentes...", etc.
 - If the user gets confused, offer to explain more or slow down
+- **After completion**, suggest next steps: "Probá decirme 'Analizá mi proyecto' o 'Mostrame el tablero'"

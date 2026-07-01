@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
 # Lara Diaries — Linux Bootstrap
-# Usage: ./bootstrap.sh [--check] [--dry-run]
+# Usage: ./bootstrap.sh [--check] [--dry-run] [--non-interactive <json-file>]
 #    or: curl -fsSL https://raw.githubusercontent.com/orlinefoster/lara-diaries/main/bootstrap/bootstrap.sh | bash
 set -euo pipefail
 
 # ── Parse flags ───────────────────────────────
 DRY_RUN=false
 CHECK_ONLY=false
+NON_INTERACTIVE=""
 for arg in "$@"; do
     case "$arg" in
         --check|-c)   CHECK_ONLY=true  ;;
         --dry-run|-n) DRY_RUN=true     ;;
+        --non-interactive)
+            # Next arg is the JSON file path
+            ;;
         --help|-h)
-            echo "Usage: ./bootstrap.sh [--check] [--dry-run]"
+            echo "Usage: ./bootstrap.sh [--check] [--dry-run] [--non-interactive <json-file>]"
             echo ""
-            echo "  --check, -c    Solo diagnosticar prerequisites. No instala nada."
-            echo "  --dry-run, -n  Simular la configuracion completa sin cambios."
-            echo "  --help, -h     Mostrar esta ayuda."
+            echo "  --check, -c              Solo diagnosticar. No instala nada."
+            echo "  --dry-run, -n            Simular la configuracion sin cambios."
+            echo "  --non-interactive <file>  Instalacion automatica desde JSON."
+            echo "  --help, -h               Mostrar esta ayuda."
             exit 0
+            ;;
+        *)
+            if [[ -z "$NON_INTERACTIVE" ]] && [[ "$arg" != -* ]]; then
+                NON_INTERACTIVE="$arg"
+            fi
             ;;
     esac
 done
@@ -286,6 +296,25 @@ dry_run() {
 }
 
 # =============================================================================
+# Non-Interactive Mode
+# =============================================================================
+noninteractive_main() {
+    local config_file="$1"
+
+    if [[ ! -f "$config_file" ]]; then
+        error "Config file not found: $config_file"
+        exit 1
+    fi
+
+    echo ""
+    title "  [NON-INTERACTIVE] Instalacion automatica desde: $config_file"
+    echo ""
+
+    source "$(dirname "$0")/../modules/wizard-core.sh"
+    wizard_noninteractive "$config_file"
+}
+
+# =============================================================================
 # Main Entry Point
 # =============================================================================
 main() {
@@ -299,6 +328,11 @@ main() {
 
     if [[ "$DRY_RUN" == "true" ]]; then
         dry_run
+        exit 0
+    fi
+
+    if [[ -n "$NON_INTERACTIVE" ]]; then
+        noninteractive_main "$NON_INTERACTIVE"
         exit 0
     fi
 

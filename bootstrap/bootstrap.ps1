@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Lara Diaries - Windows Bootstrap
-# Usage: .\bootstrap.ps1 [-Check] [-DryRun]
+# Usage: .\bootstrap.ps1 [-Check] [-DryRun] [-NonInteractive <json>]
 # Requires: PowerShell 5.1+ or PowerShell Core 7+
 
 <#
@@ -9,20 +9,25 @@
 .DESCRIPTION
     Checks for git, gh CLI, Node.js, winget, and guides through setup.
 
-    -Check   : Only check prerequisites and report status. No installation.
-    -DryRun  : Show what would be installed without making changes.
+    -Check           : Only check prerequisites and report status.
+    -DryRun          : Show installation plan without making changes.
+    -NonInteractive  : JSON config string for AI-driven install.
+                       Skips all prompts, runs install directly.
+                       Example: '{"pronoun":"she/her","install_gentle_ai":true}'
 .NOTES
     Compatible with Windows PowerShell 5.1 and PowerShell Core 7+.
 #>
 
 param(
     [switch]$Check,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [string]$NonInteractive
 )
 
 $ErrorActionPreference = "Stop"
 $script:IsDryRun = $DryRun
 $script:IsCheckOnly = $Check
+$script:NonInteractiveConfig = if ($NonInteractive) { $NonInteractive } else { $null }
 
 # ── BANNER ────────────────────────────────────
 function Show-Banner {
@@ -252,6 +257,16 @@ function Main {
     if ($script:IsDryRun) {
         if (-not $script:PrereqResults) { $null = Test-Prerequisites }
         Start-DryRun
+        return
+    }
+
+    # Non-interactive mode: AI-driven install, skip all prompts
+    if ($script:NonInteractiveConfig) {
+        Write-Host "  [NON-INTERACTIVE] Recibiendo configuracion via JSON...`n" -ForegroundColor Cyan
+        $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
+        $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
+        . $resolvedPath
+        Start-NonInteractiveWizard -ConfigJson $script:NonInteractiveConfig
         return
     }
 

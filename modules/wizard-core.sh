@@ -872,6 +872,88 @@ JSONEOF
 }
 
 # =============================================================================
+# 12. Non-Interactive Wizard (AI-driven)
+# =============================================================================
+wizard_noninteractive() {
+    local config_file="$1"
+
+    log_title ""
+    log_title "⚡ Non-Interactive Setup"
+    echo "────────────────────────────────────────"
+    echo ""
+    log_info "Loading config from: $config_file"
+
+    if [[ ! -f "$config_file" ]]; then
+        log_error "Config file not found: $config_file"
+        return 1
+    fi
+
+    # Parse JSON config using bash builtins (requires jq or python3)
+    local json_data
+    json_data="$(cat "$config_file")"
+
+    local parse_cmd=""
+    if command -v python3 &>/dev/null; then
+        parse_cmd="python3"
+    elif command -v jq &>/dev/null; then
+        parse_cmd="jq"
+    else
+        log_error "Need python3 or jq to parse JSON config."
+        log_error "Install one of them and re-run."
+        return 1
+    fi
+
+    # Helper: extract value from JSON
+    get_json_val() {
+        local key="$1"
+        local default="$2"
+        if [[ "$parse_cmd" == "python3" ]]; then
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$key','$default'))" <<< "$json_data"
+        else
+            jq -r ".$key // \"$default\"" <<< "$json_data"
+        fi
+    }
+
+    # Validate GitHub auth
+    if ! gh auth status &>/dev/null; then
+        log_error "GitHub not authenticated. User must run 'gh auth login' first."
+        return 1
+    fi
+    GITHUB_USER="$(gh api user --jq .login 2>/dev/null || echo "")"
+    log_info "GitHub: $GITHUB_USER"
+
+    # Parse config
+    PRONOUN="$(get_json_val "pronoun" "they/them")"
+    SKILL_LEVEL="$(get_json_val "skill_level" "me-defiendo")"
+    ASSISTANCE_MODE="$(get_json_val "assistance_mode" "medium")"
+    STYLE="$(get_json_val "style" "clean-ui")"
+    USE_DESIGN_DOC="$(get_json_val "use_design_doc" "true")"
+    REPO_MANAGEMENT="$(get_json_val "repo_mode" "auto")"
+    MISSION="$(get_json_val "mission" "personal-important")"
+    INSTALL_GENTLE_AI="$(get_json_val "install_gentle_ai" "true")"
+    INSTALL_SKILLS="$(get_json_val "install_gentleman_skills" "true")"
+    INSTALL_VSCODE="$(get_json_val "install_vscode" "true")"
+    INSTALL_GGA="$(get_json_val "install_gga" "false")"
+
+    DEV_DIR="$(get_json_val "dev_dir" "$HOME/Documents/Develops")"
+    mkdir -p "$DEV_DIR"
+
+    log_info "Config loaded. Starting installation..."
+
+    # Run install steps
+    log_info "[1/3] Installing components..."
+    install_components
+
+    log_info "[2/3] Setting up sync..."
+    setup_sync
+
+    log_info "[3/3] Saving profile..."
+    save_user_profile
+
+    show_summary
+}
+
+# =============================================================================
 # Wizard Main — Orchestrator
 # =============================================================================
 wizard_main() {

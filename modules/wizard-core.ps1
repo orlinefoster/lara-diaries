@@ -713,6 +713,94 @@ function Show-Summary {
     Write-Host "`n"
 }
 
+# ── NON-INTERACTIVE WIZARD ──────────────────
+function Start-NonInteractiveWizard {
+    param([string]$ConfigJson)
+
+    Write-Host "  [NON-INTERACTIVE] Procesando configuracion..." -ForegroundColor Cyan
+
+    # Parse JSON config
+    try {
+        $config = $ConfigJson | ConvertFrom-Json
+    } catch {
+        Write-ErrorMsg "Error parseando JSON: $_"
+        Write-Host "  JSON recibido: $ConfigJson" -ForegroundColor Gray
+        throw "Invalid JSON config"
+    }
+
+    # Validate GitHub auth (no interactive login)
+    $gh = Get-Command "gh" -ErrorAction SilentlyContinue
+    if (-not $gh) { throw "gh CLI not found" }
+    $null = & gh auth status 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorMsg "GitHub no autenticado. El usuario debe hacer 'gh auth login' primero."
+        throw "GitHub auth required"
+    }
+    $ghUser = & gh api user --jq .login 2>$null
+    if (-not $ghUser) { throw "Could not get GitHub username" }
+
+    # Resolve dev directory
+    $devDir = if ($config.dev_dir) { $config.dev_dir } else { Join-Path $HOME "Documents\Develops" }
+    if (-not (Test-Path -LiteralPath $devDir)) {
+        $null = New-Item -ItemType Directory -Path $devDir -Force
+    }
+
+    # Map mission to discretion
+    $discretion = switch ($config.mission) {
+        "personal-important" { "high-caution" }
+        "work"               { "moderate" }
+        "vm"                 { "relaxed" }
+        "lab-raspberry"      { "very-relaxed" }
+        default              { "moderate" }
+    }
+
+    # Set up WizardAnswers
+    $script:WizardAnswers = @{
+        GitHubUser             = $ghUser
+        DevDir                 = $devDir
+        Pronoun                = if ($config.pronoun) { $config.pronoun } else { "they/them" }
+        SkillLevel             = if ($config.skill_level) { $config.skill_level } else { "me-defiendo" }
+        SkillLevelDesc         = switch ($config.skill_level) {
+            "full-fearless"    { "Assume competence, focus on trade-offs" }
+            "me-defiendo"      { "Explain the why behind each decision" }
+            "me-invito-un-amigo" { "Start from basics, be gentle" }
+            default            { "Explain the why behind each decision" }
+        }
+        AssistanceMode         = if ($config.assistance_mode) { $config.assistance_mode } else { "medium" }
+        RepoMode               = if ($config.repo_mode) { $config.repo_mode } else { "auto" }
+        UseDesignDoc           = if ($config.use_design_doc -eq $false) { $false } else { $true }
+        Style                  = if ($config.style) { $config.style } else { "clean-ui" }
+        Mission                = if ($config.mission) { $config.mission } else { "personal-important" }
+        Discretion             = $discretion
+        InstallGentleAI        = if ($config.install_gentle_ai -eq $false) { $false } else { $true }
+        InstallGentlemanSkills = if ($config.install_gentleman_skills -eq $false) { $false } else { $true }
+        InstallVSCode          = if ($config.install_vscode -eq $false) { $false } else { $true }
+        InstallGGA             = if ($config.install_gga -eq $true) { $true } else { $false }
+    }
+
+    $script:UserProfile = @{
+        Pronoun         = $script:WizardAnswers.Pronoun
+        SkillLevel      = $script:WizardAnswers.SkillLevel
+        SkillLevelDesc  = $script:WizardAnswers.SkillLevelDesc
+        AssistanceMode  = $script:WizardAnswers.AssistanceMode
+        Mission         = $script:WizardAnswers.Mission
+        Discretion      = $script:WizardAnswers.Discretion
+    }
+
+    # Run install steps
+    Write-Host "`n  [1/4] Verificando repositorios GitHub..." -ForegroundColor Cyan
+    Install-Components
+
+    Write-Host "`n  [2/4] Configurando sincronizacion..." -ForegroundColor Cyan
+    Setup-Sync
+
+    Write-Host "`n  [3/4] Guardando perfil..." -ForegroundColor Cyan
+    Save-UserProfile
+
+    Write-Host "`n  [4/4] Mostrando resumen..." -ForegroundColor Cyan
+    Show-Summary
+}
+
 # ── MAIN WIZARD ORCHESTRATOR ──────────────────
 function Start-Wizard {
     Write-Host "`n"
