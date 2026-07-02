@@ -396,6 +396,85 @@ component_status() {
 # Rollback & Step State Helpers
 # =============================================================================
 
+# In-memory rollback stack for cumulative rollback within install_components.
+# Each entry is "type:value" where type is "dir" or "config".
+ROLLBACK_STACK=()
+
+# Push a directory for rollback
+push_rollback_dir() {
+    ROLLBACK_STACK+=("dir:$1")
+}
+
+# Push a config file backup for rollback
+push_rollback_config() {
+    ROLLBACK_STACK+=("config:$1:$2")
+}
+
+# Clear the rollback stack
+clear_rollback_stack() {
+    ROLLBACK_STACK=()
+}
+
+# Execute all rollbacks in reverse order (last pushed = first rolled back)
+rollback_stack_all() {
+    local i entry type val
+    log_warn "  Iniciando rollback completo..."
+    for ((i = ${#ROLLBACK_STACK[@]} - 1; i >= 0; i--)); do
+        entry="${ROLLBACK_STACK[$i]}"
+        type="${entry%%:*}"
+        val="${entry#*:}"
+        case "$type" in
+            dir)
+                rollback_remove_dir "$val"
+                ;;
+            config)
+                local backup="${val%%:*}"
+                local original="${val#*:}"
+                rollback_config "$backup" "$original"
+                ;;
+        esac
+    done
+    ROLLBACK_STACK=()
+}
+
+# Register rollbacks after a successful sub-install
+register_gentle_ai_rollback() {
+    push_rollback_dir "$HOME/gentle-ai"
+}
+
+register_gentleman_skills_rollback() {
+    local skills_dir="$OPENCODE_CONFIG_DIR/skills"
+    push_rollback_dir "$skills_dir/gentleman-skills"
+}
+
+register_engram_rollback() {
+    push_rollback_dir "$HOME/.local/bin/engram"
+}
+
+register_opencode_rollback() {
+    push_rollback_dir "$OPENCODE_CONFIG_DIR/agents"
+    push_rollback_config "$OPENCODE_CONFIG_DIR/opencode.json.bak" "$OPENCODE_CONFIG_DIR/opencode.json"
+}
+
+register_vscode_rollback() {
+    # VSCode extensions rollback is handled per-extension
+    # No directory to remove
+    :
+}
+
+register_gga_rollback() {
+    push_rollback_dir "$HOME/gentleman-guardian-angel"
+}
+
+register_github_repos_rollback() {
+    local repo
+    if [[ -d "$DEV_DIR" ]]; then
+        for repo in "$DEV_DIR"/*/; do
+            [[ -d "$repo/.git" ]] && push_rollback_dir "$repo"
+        done
+    fi
+}
+
 # Rollback: remove a directory (used for failed git clones)
 rollback_remove_dir() {
     local dir="$1"
@@ -912,7 +991,10 @@ install_gentle_ai() {
                 ga_installer="$HOME/gentle-ai/install.sh"
             fi
             if [[ -n "$ga_installer" ]]; then
-                bash "$ga_installer" || log_warn "gentle-ai installer reported issues."
+                if ! bash "$ga_installer"; then
+                    log_warn "gentle-ai installer reported issues."
+                    return 1
+                fi
             else
                 if command -v gentle-ai &>/dev/null; then
                     gentle-ai install 2>/dev/null || log_warn "gentle-ai install command failed."
@@ -946,8 +1028,9 @@ install_gentleman_skills() {
         if git clone https://github.com/Gentleman-Programming/Gentleman-Skills.git "$skills_dir/gentleman-skills"; then
             log_info "Gentleman Skills installed."
         else
-            log_warn "Failed to clone Gentleman Skills. Continuing..."
+            log_error "Failed to clone Gentleman Skills."
             rollback_remove_dir "$skills_dir/gentleman-skills"
+            return 1
         fi
     fi
 }
@@ -1186,6 +1269,9 @@ install_components() {
         echo ""
     fi
 
+    # Initialize cumulative rollback stack
+    clear_rollback_stack
+
     # --- Resolve templates directory ---
     local templates_dir=""
     local this_dir
@@ -1201,9 +1287,21 @@ install_components() {
 
     # --- 8a. Gentle AI & Gentleman Skills ---
     if [[ "$INSTALL_GENTLE_AI" == "true" ]]; then
-        install_gentle_ai
-        if [[ "$INSTALL_SKILLS" == "true" ]]; then
-            install_gentleman_skills
+        if install_gentle_ai; then
+            register_gentle_ai_rollback
+            if [[ "$INSTALL_SKILLS" == "true" ]]; then
+                if install_gentleman_skills; then
+                    register_gentleman_skills_rollback
+                else
+                    log_error "Failed to install Gentleman Skills."
+                    rollback_stack_all
+                    return 1
+                fi
+            fi
+        else
+            log_error "Failed to install Gentle AI."
+            rollback_stack_all
+            return 1
         fi
     else
         echo -e "  ${GRAY}[Gentle AI] ${BOLD}OMITIDO${RESET}"
@@ -1214,22 +1312,38 @@ install_components() {
     local engram_status=$?
     if [[ $engram_status -eq 0 ]]; then
         log_info "Engram ya instalado: $(engram --version 2>/dev/null || echo 'version unknown')"
+        register_engram_rollback
     elif [[ $engram_status -eq 2 ]]; then
         : # dry-run
     else
-        install_engram || return 1
+        if install_engram; then
+            register_engram_rollback
+        else
+            log_error "Failed to install Engram."
+            rollback_stack_all
+            return 1
+        fi
     fi
 
     # --- 8d. VSCode (optional) ---
     if [[ "${INSTALL_VSCODE:-false}" == "true" ]]; then
-        install_vscode
+        if install_vscode; then
+            register_vscode_rollback
+        else
+            log_warn "VSCode installation had issues. Continuing anyway."
+            # No rollback — VSCode is optional and non-destructive
+        fi
     else
         echo -e "  ${GRAY}[VSCode] ${BOLD}OMITIDO${RESET}"
     fi
 
     # --- 8e. Gentleman Guardian Angel (optional) ---
     if [[ "${INSTALL_GGA:-false}" == "true" ]]; then
-        install_gga
+        if install_gga; then
+            register_gga_rollback
+        else
+            log_warn "GGA installation had issues. Continuing anyway."
+        fi
     else
         echo -e "  ${GRAY}[GGA] ${BOLD}OMITIDO${RESET}"
     fi
@@ -1238,12 +1352,18 @@ install_components() {
     if [[ -n "$templates_dir" ]]; then
         copy_agent_templates "$templates_dir"
         generate_opencode_json "$templates_dir"
+        # Register rollback for opencode config changes
+        register_opencode_rollback
     else
         log_warn "Skipping agent file creation (templates not found)."
     fi
 
     # --- 8g. GitHub Repositories + Clone ---
-    setup_github_repos
+    if setup_github_repos; then
+        register_github_repos_rollback
+    else
+        log_warn "GitHub repo setup had issues. Continuing anyway."
+    fi
 
     # --- 8h. First config backup ---
     backup_initial_config

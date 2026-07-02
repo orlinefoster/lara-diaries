@@ -238,6 +238,18 @@ func (s *State) ReadStep(name string) (*Step, error) {
 	return &step, nil
 }
 
+// CompletedSteps returns the step names (in installSteps order) that have
+// status StepSuccess. Used by cumulative rollback to know what to undo.
+func (s *State) CompletedSteps() []string {
+	var completed []string
+	for _, step := range installSteps {
+		if st, err := s.ReadStep(step.Name); err == nil && st != nil && st.Status == StepSuccess {
+			completed = append(completed, step.Name)
+		}
+	}
+	return completed
+}
+
 // newUUID generates a UUID v4 string using crypto/rand.
 func newUUID() string {
 	b := make([]byte, 16)

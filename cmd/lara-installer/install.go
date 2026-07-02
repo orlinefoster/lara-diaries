@@ -79,6 +79,23 @@ func rollbackShell(desc, cmdStr string) {
 	_ = cmd.Run()
 }
 
+// rollbackAll runs the rollback for every completed step in reverse order.
+// This is the cumulative rollback — if step 4 fails, it undoes steps 1-3 too.
+func rollbackAll(state *State) {
+	completed := state.CompletedSteps()
+	// Roll back in reverse order (last installed, first undone)
+	for i := len(completed) - 1; i >= 0; i-- {
+		name := completed[i]
+		for _, step := range installSteps {
+			if step.Name == name {
+				fmt.Println("  [..] Rolling back: " + step.Name)
+				step.Rollback()
+				break
+			}
+		}
+	}
+}
+
 // installStep defines a single installation step with its run and rollback functions.
 type installStep struct {
 	Name     string
@@ -289,11 +306,9 @@ func runInstall() {
 			msg := stepErr.Error()
 			fmt.Fprintf(os.Stderr, "  [FAIL] Step '%s' failed: %s\n", step.Name, msg)
 
-			// Run rollback
-			if wizardPath != "" {
-				step.Rollback()
-			}
-			fmt.Println("  [..] Rollback completed for: " + step.Name)
+			// Cumulative rollback: undo ALL completed steps in reverse order
+			rollbackAll(state)
+			fmt.Println("  [..] Cumulative rollback completed.")
 
 			// Mark step as failed
 			writeFailedState(state, step.Name, msg)
