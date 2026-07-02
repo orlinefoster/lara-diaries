@@ -52,11 +52,8 @@ type State struct {
 // timeNow is overridable for testing.
 var timeNow = time.Now
 
-// StateDir returns the platform-specific state directory.
-//
-//	Linux/Mac: $HOME/.config/lara-diaries/
-//	Windows:   %LOCALAPPDATA%\LaraDiaries\
-func StateDir() string {
+// StateDir is overridable for testing.
+var StateDir = func() string {
 	if runtime.GOOS == "windows" {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		if localAppData == "" {
@@ -74,13 +71,13 @@ func StateDir() string {
 	return filepath.Join(home, ".config", "lara-diaries")
 }
 
-// StateFile returns the absolute path to state.json.
-func StateFile() string {
+// StateFile is overridable for testing.
+var StateFile = func() string {
 	return filepath.Join(StateDir(), "state.json")
 }
 
-// LockFile returns the absolute path to install.lock (lives alongside state.json).
-func LockFile() string {
+// LockFile is overridable for testing.
+var LockFile = func() string {
 	return filepath.Join(StateDir(), "install.lock")
 }
 

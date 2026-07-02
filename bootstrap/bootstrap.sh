@@ -8,6 +8,37 @@ set -euo pipefail
 BINARY_BASE_URL="${LARA_INSTALLER_BASE_URL:-https://github.com/orlinefoster/lara-diaries/releases/latest/download}"
 VERSION="0.1.0"
 
+# --- Parse flags ---
+NON_INTERACTIVE=""
+CHECK_ONLY=false
+DRY_RUN=false
+GO_ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --check|-c)        CHECK_ONLY=true ;;
+        --dry-run|-n)      DRY_RUN=true ;;
+        --non-interactive) ;;  # next arg is the JSON value
+        --help|-h)
+            echo "Usage: ./bootstrap.sh [--check|--dry-run|--non-interactive <json>|install|doctor|--version]"
+            echo ""
+            echo "  install           Run the full installer (default)"
+            echo "  doctor            System health check (if binary available)"
+            echo "  --version         Show version"
+            echo "  --check, -c       Diagnose system state without installing"
+            echo "  --dry-run, -n     Show installation plan without changes"
+            echo "  --non-interactive AI-driven install from JSON config"
+            echo "  --help, -h        Show this help"
+            exit 0
+            ;;
+        doctor|install|--version) GO_ARGS+=("$arg") ;;
+        *)
+            if [[ -z "$NON_INTERACTIVE" ]] && [[ "$arg" != -* ]]; then
+                NON_INTERACTIVE="$arg"
+            fi
+            ;;
+    esac
+done
+
 # --- Detect OS + arch ---
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -98,14 +129,11 @@ install_binary() {
 }
 
 fallback_wizard() {
-    echo -e "${YELLOW}[!]${RESET} Falling back to script-based wizard..."
-
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local wizard_core="${script_dir}/../modules/wizard-core.sh"
 
     if [[ ! -f "$wizard_core" ]]; then
-        # Try repo clone fallback path
         wizard_core="${HOME}/lara-diaries/modules/wizard-core.sh"
     fi
 
@@ -117,18 +145,65 @@ fallback_wizard() {
 
     # shellcheck source=../modules/wizard-core.sh
     source "$wizard_core"
-    wizard_main
+
+    if [[ -n "$NON_INTERACTIVE" ]]; then
+        echo -e "${YELLOW}[!]${RESET} Running non-interactive install from JSON config..."
+        wizard_noninteractive "$NON_INTERACTIVE"
+    elif [[ "$CHECK_ONLY" == "true" ]]; then
+        echo -e "${YELLOW}[!]${RESET} Check mode (script-based)..."
+        # check_only and dry_run were removed in the hybrid rewrite;
+        # run the doctor from wizard-core.sh if available, or the Go binary's doctor
+        if type wizard_check_only &>/dev/null 2>&1; then
+            wizard_check_only
+        else
+            echo -e "${YELLOW}[!]${RESET} Check mode not available in script fallback."
+            echo "  Install the lara-installer binary and use: lara-installer doctor"
+            exit 0
+        fi
+    elif [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}[!]${RESET} Dry-run mode (script-based)..."
+        if type wizard_dry_run &>/dev/null 2>&1; then
+            wizard_dry_run
+        else
+            echo -e "${YELLOW}[!]${RESET} Dry-run mode not available in script fallback."
+            echo "  Run without --dry-run for interactive installation."
+            exit 0
+        fi
+    else
+        echo -e "${YELLOW}[!]${RESET} Falling back to script-based wizard..."
+        wizard_main
+    fi
 }
 
+# ---- FALLBACK PATH ----
+# The functions below (install_binary, fallback_wizard) implement the
+# two-phase hybrid strategy:
+#   1. If the Go binary exists at BINARY_PATH, run it directly.
+#   2. If not found, download it from GitHub Releases (install_binary).
+#   3. If the download fails, fall back to the script-based wizard-core.sh
+#      (fallback_wizard). This ensures operation even without network
+#      access to release artifacts or a pre-built binary.
+#
+# The binary download includes SHA256 verification when the checksum
+# file is available from the release server.
+
 # --- MAIN ---
-if [[ -x "$BINARY_PATH" ]]; then
-    echo -e "${GREEN}[OK]${RESET} lara-installer binary found. Running..."
-    exec "$BINARY_PATH" "$@"
+# Flags not supported by Go binary yet → skip to fallback
+if [[ "$CHECK_ONLY" == "true" || "$DRY_RUN" == "true" || -n "$NON_INTERACTIVE" ]]; then
+    fallback_wizard
+    exit $?
 fi
 
+# Try existing binary
+if [[ -x "$BINARY_PATH" ]]; then
+    echo -e "${GREEN}[OK]${RESET} lara-installer binary found. Running..."
+    exec "$BINARY_PATH" "${GO_ARGS[@]}"
+fi
+
+# Download binary
 echo -e "${YELLOW}[..]${RESET} lara-installer not found at $BINARY_PATH"
 if install_binary; then
-    exec "$BINARY_PATH" "$@"
+    exec "$BINARY_PATH" "${GO_ARGS[@]}"
 else
-    fallback_wizard "$@"
+    fallback_wizard
 fi

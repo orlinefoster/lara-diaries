@@ -14,8 +14,35 @@ type doctorCheck struct {
 	Detail string
 }
 
+// runDoctorChecks runs all health checks and returns the results.
+func runDoctorChecks() []doctorCheck {
+	var checks []doctorCheck
+
+	// 1. OS compatibility
+	checks = append(checks, checkOS())
+
+	// 2. State file
+	checks = append(checks, checkStateFile())
+
+	// 3. Lock file status
+	checks = append(checks, checkLockFile())
+
+	// 4. Prerequisites: git, gh
+	checks = append(checks, checkPrereq("git"))
+	checks = append(checks, checkPrereq("gh"))
+
+	// 5. State directory accessibility
+	checks = append(checks, checkStateDir())
+
+	// 6. Self check
+	checks = append(checks, doctorSelfCheck())
+
+	return checks
+}
+
 func runDoctor() {
 	var checks []doctorCheck
+	checks = runDoctorChecks()
 	allOK := true
 
 	fmt.Println()
@@ -27,42 +54,10 @@ func runDoctor() {
 	fmt.Println("  +-----------------------------------------+")
 	fmt.Println()
 
-	// 1. OS compatibility
-	osCheck := checkOS()
-	checks = append(checks, osCheck)
-	if osCheck.Status != "OK" {
-		allOK = false
-	}
-
-	// 2. State file
-	stateCheck := checkStateFile()
-	checks = append(checks, stateCheck)
-	if stateCheck.Status == "FAIL" {
-		allOK = false
-	}
-
-	// 3. Lock file status
-	lockCheck := checkLockFile()
-	checks = append(checks, lockCheck)
-
-	// 4. Prerequisites: git, gh
-	gitCheck := checkPrereq("git")
-	checks = append(checks, gitCheck)
-	if gitCheck.Status == "FAIL" {
-		allOK = false
-	}
-
-	ghCheck := checkPrereq("gh")
-	checks = append(checks, ghCheck)
-	if ghCheck.Status == "FAIL" {
-		allOK = false
-	}
-
-	// 5. State directory accessibility
-	dirCheck := checkStateDir()
-	checks = append(checks, dirCheck)
-	if dirCheck.Status == "FAIL" {
-		allOK = false
+	for _, c := range checks {
+		if c.Status != "OK" {
+			allOK = false
+		}
 	}
 
 	// --- Print results ---
@@ -187,5 +182,36 @@ func checkStateDir() doctorCheck {
 	}
 	c.Status = "OK"
 	c.Detail = "Accessible at " + dir
+	return c
+}
+
+// doctorSelfCheck verifies the lara-installer binary's own integrity.
+// Returns a check result for self-diagnostics.
+func doctorSelfCheck() doctorCheck {
+	c := doctorCheck{Name: "Self Check"}
+
+	// Verify we can read our own executable
+	exe, err := os.Executable()
+	if err != nil {
+		c.Status = "FAIL"
+		c.Detail = "Cannot determine executable path: " + err.Error()
+		return c
+	}
+
+	info, err := os.Stat(exe)
+	if err != nil {
+		c.Status = "FAIL"
+		c.Detail = "Cannot stat executable: " + err.Error()
+		return c
+	}
+
+	if info.Size() == 0 {
+		c.Status = "FAIL"
+		c.Detail = "Executable is empty"
+		return c
+	}
+
+	c.Status = "OK"
+	c.Detail = fmt.Sprintf("Binary OK (%d bytes, v%s)", info.Size(), version)
 	return c
 }
