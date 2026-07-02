@@ -136,6 +136,16 @@ Borrás la carpeta `lara-diaries`, desinstalás opencode con `winget uninstall O
 
 ---
 
+## ⚙️ Installer Architecture
+
+The Lara Diaries installer uses a **two-phase hybrid** design:
+
+- **Phase 1 (Shell)** — `bootstrap.ps1` / `bootstrap.sh` manage state.json, install lock, resume, and rollback directly from PowerShell/Bash. This phase works independently of any binary.
+- **Phase 2 (Go binary)** — `cmd/lara-installer` is a self-contained Go binary with the same state machine, lock-protected installs, step lifecycle tracking, and a `doctor` command for system health checks.
+- **Fallback chain** — When the Go binary is not found, the shell wrapper downloads it from GitHub Releases. If the download fails, it falls back to the script-based wizard (`modules/wizard-core.ps1` / `wizard-core.sh`).
+- **State machine** — Each install step transitions through `pending → running → success/failed/skipped`. The state is persisted to `state.json` for resume support and crash recovery.
+- **Lock protection** — A PID-based lock file (`install.lock`) prevents concurrent installations and detects stale installs from interrupted runs.
+
 ## 🧭 Estructura del proyecto (para curiosas)
 
 ```

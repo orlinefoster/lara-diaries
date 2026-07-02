@@ -392,6 +392,188 @@ component_status() {
 }
 
 # =============================================================================
+# Rollback & Step State Helpers
+# =============================================================================
+
+# Rollback: remove a directory (used for failed git clones)
+rollback_remove_dir() {
+    local dir="$1"
+    if [[ -d "$dir" ]]; then
+        log_warn "  Rollback: eliminando $dir"
+        rm -rf "$dir" 2>/dev/null || true
+    fi
+}
+
+# Rollback: restore a backed-up config file
+rollback_config() {
+    local backup="$1"
+    local original="$2"
+    if [[ -f "$backup" ]]; then
+        log_warn "  Rollback: restaurando $original desde backup"
+        cp "$backup" "$original" 2>/dev/null || true
+    fi
+}
+
+# Write step state to state.json
+wizard_step_state() {
+    local step_name="$1"
+    local status="$2"
+    local error_msg="${3:-}"
+    local rollback_action="${4:-}"
+
+    # Use bootstrap.sh's lara_step_state if available
+    if command -v lara_step_state &>/dev/null; then
+        lara_step_state "$step_name" "$status" "${error_msg:-null}" "${rollback_action:-null}"
+        return
+    fi
+
+    # Standalone fallback
+    local state_dir="$HOME/.config/lara-diaries"
+    local state_file="$state_dir/state.json"
+    mkdir -p "$state_dir" 2>/dev/null
+
+    local now
+    now="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
+
+    # Read existing state or create new
+    local state_content=""
+    if [[ -f "$state_file" ]]; then
+        state_content="$(cat "$state_file" 2>/dev/null || echo "")"
+    fi
+
+    local new_json=""
+    if [[ -n "$state_content" ]] && echo "$state_content" | grep -q '"version"' 2>/dev/null; then
+        if command -v python3 &>/dev/null; then
+            # Pass ALL values via environment variables to prevent shell injection
+            # into the Python code. Using env vars avoids string interpolation.
+            new_json="$(LWS_STEP_NAME="$step_name" \
+            LWS_STATUS="$status" \
+            LWS_ERROR_MSG="${error_msg:-}" \
+            LWS_ROLLBACK="${rollback_action:-}" \
+            LWS_NOW="$now" \
+            LWS_STATE_CONTENT="$state_content" \
+            python3 -c "
+import json, os
+
+state_content = os.environ.get('LWS_STATE_CONTENT', '')
+state = json.loads(state_content)
+if 'steps' not in state:
+    state['steps'] = {}
+
+step_name = os.environ.get('LWS_STEP_NAME', '')
+status = os.environ.get('LWS_STATUS', '')
+error_msg = os.environ.get('LWS_ERROR_MSG', '') or None
+rollback = os.environ.get('LWS_ROLLBACK', '') or None
+now = os.environ.get('LWS_NOW', '')
+
+step = state['steps'].get(step_name, {})
+step['status'] = status
+step['error'] = error_msg
+step['rollback'] = rollback
+
+if status in ('success', 'failed', 'skipped'):
+    step['completed_at'] = now
+elif 'completed_at' not in step or step.get('completed_at') is None:
+    step['completed_at'] = None
+if 'started_at' not in step:
+    step['started_at'] = now
+
+state['steps'][step_name] = step
+state['updated_at'] = now
+print(json.dumps(state, indent=2))
+")"
+        fi
+    fi
+
+    if [[ -z "$new_json" ]]; then
+        # Create fresh state
+        local install_id
+        install_id="$(uuidgen 2>/dev/null || date '+%s')"
+        new_json='{
+  "version": 1,
+  "install_id": "'"$install_id"'",
+  "created_at": "'"$now"'",
+  "updated_at": "'"$now"'",
+  "install_type": "fresh",
+  "steps": {
+    "'"$step_name"'": {
+      "status": "'"$status"'",
+      "started_at": "'"$now"'",
+      "completed_at": '"$(if [[ "$status" == "success" || "$status" == "failed" || "$status" == "skipped" ]]; then echo "\"$now\""; else echo "null"; fi)"',
+      "error": '"${error_msg:-null}"',
+      "rollback": '"${rollback_action:-null}"'
+    }
+  }
+}'
+    fi
+
+    if [[ -n "$new_json" ]]; then
+        printf '%s\n' "$new_json" > "$state_file"
+    fi
+}
+
+# Check if a step is already completed (for resume)
+wizard_step_is_done() {
+    local step_name="$1"
+    local state_file="$HOME/.config/lara-diaries/state.json"
+    if [[ ! -f "$state_file" ]]; then
+        return 1
+    fi
+
+    # Use python3 for exact JSON parsing (preferred)
+    if command -v python3 &>/dev/null; then
+        STATUS_CHECK="$step_name" python3 -c "
+import json, os, sys
+step_name = os.environ['STATUS_CHECK']
+with open('$state_file') as f:
+    state = json.load(f)
+step = state.get('steps', {}).get(step_name)
+if step and step.get('status') == 'success':
+    sys.exit(0)
+else:
+    sys.exit(1)
+" 2>/dev/null && return 0 || return 1
+    fi
+
+    # Fallback: jq
+    if command -v jq &>/dev/null; then
+        jq -e ".steps.\"$step_name\".status == \"success\"" "$state_file" >/dev/null 2>&1 && return 0 || return 1
+    fi
+
+    # Last resort: grep/sed (fragile, but no other parser available)
+    local status
+    status="$(grep -A5 "\"$step_name\"" "$state_file" 2>/dev/null | grep '"status"' | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' 2>/dev/null)"
+    if [[ "$status" == "success" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Run a step with state tracking and rollback on failure
+wizard_run_step() {
+    local step_name="$1"
+    local step_label="$2"
+    local step_func="$3"
+
+    # Skip if already done (resume mode)
+    if wizard_step_is_done "$step_name"; then
+        log_info "Paso '$step_label' ya completado. Omitiendo."
+        return 0
+    fi
+
+    wizard_step_state "$step_name" "running"
+
+    if ! $step_func; then
+        log_error "Paso '$step_label' fallo."
+        wizard_step_state "$step_name" "failed" "Step '$step_label' failed"
+        return 1
+    fi
+
+    wizard_step_state "$step_name" "success"
+    return 0
+}
+
+# =============================================================================
 # 8. Install Components
 # =============================================================================
 install_components() {
@@ -455,6 +637,7 @@ install_components() {
                 fi
             else
                 log_error "Failed to clone gentle-ai. Check internet connection."
+                rollback_remove_dir "$HOME/gentle-ai"
                 return 1
             fi
         fi
@@ -475,6 +658,7 @@ install_components() {
                     log_info "Gentleman Skills installed."
                 else
                     log_warn "Failed to clone Gentleman Skills. Continuing..."
+                    rollback_remove_dir "$skills_dir/gentleman-skills"
                 fi
             fi
         fi
@@ -655,6 +839,7 @@ install_components() {
                 fi
             else
                 log_error "Failed to clone GGA."
+                rollback_remove_dir "$HOME/gentleman-guardian-angel"
             fi
         fi
     else
@@ -1113,20 +1298,164 @@ wizard_main() {
     echo -e "${CYAN}Bienvenida, hermana. Vamos a ponerte todo a punto.${RESET}"
     echo ""
 
-    github_login
-    dev_directory_prompt
-    gentle_ai_prompt
-    recognition_questions
-    repo_management_prompt
-    design_orientation_prompt
-    mission_prompt
-    install_components
-    setup_sync
-    save_user_profile
-    show_summary
+    # Initialize state for interactive wizard
+    if command -v lara_state_init &>/dev/null; then
+        lara_state_init "fresh"
+    fi
+
+    wizard_run_step "github_login"       "GitHub Login"          github_login
+    wizard_run_step "dev_directory"      "Developer Directory"   dev_directory_prompt
+    wizard_run_step "gentle_ai"          "Gentle AI"             gentle_ai_prompt
+    wizard_run_step "recognition"        "Recognition Questions" recognition_questions
+    wizard_run_step "repo_management"    "Repo Management"       repo_management_prompt
+    wizard_run_step "design_orientation" "Design & Style"        design_orientation_prompt
+    wizard_run_step "mission"            "Mission"               mission_prompt
+    wizard_run_step "install_components" "Install Components"    install_components
+    wizard_run_step "setup_sync"         "Setup Sync"            setup_sync
+    wizard_run_step "save_profile"       "Save Profile"          save_user_profile
+    wizard_run_step "show_summary"       "Show Summary"          show_summary
+}
+
+# =============================================================================
+# Go Binary Step Bridge — called by lara-installer for each install step
+# =============================================================================
+# Each step is non-interactive and idempotent (checks if already done).
+# The Go binary manages lock, state machine, and resume — this just does work.
+
+run_go_step() {
+    local step_name="$1"
+    local json_config="${2:-${LARA_JSON_CONFIG:-}}"
+
+    # Parse config into global vars if provided (non-interactive mode)
+    if [[ -n "$json_config" ]]; then
+        GITHUB_USER="$(echo "$json_config" | get_json_val "github_user" "")"
+        PRONOUN="$(echo "$json_config" | get_json_val "pronoun" "")"
+        SKILL_LEVEL="$(echo "$json_config" | get_json_val "skill_level" "me-defiendo")"
+        ASSISTANCE_MODE="$(echo "$json_config" | get_json_val "assistance_mode" "medium")"
+        STYLE="$(echo "$json_config" | get_json_val "style" "clean-ui")"
+        USE_DESIGN_DOC="$(echo "$json_config" | get_json_val "use_design_doc" "true")"
+        REPO_MANAGEMENT="$(echo "$json_config" | get_json_val "repo_mode" "auto")"
+        MISSION="$(echo "$json_config" | get_json_val "mission" "personal-important")"
+        INSTALL_GENTLE_AI="$(echo "$json_config" | get_json_val "install_gentle_ai" "true")"
+        INSTALL_SKILLS="$(echo "$json_config" | get_json_val "install_gentleman_skills" "true")"
+        INSTALL_VSCODE="$(echo "$json_config" | get_json_val "install_vscode" "true")"
+        INSTALL_GGA="$(echo "$json_config" | get_json_val "install_gga" "false")"
+        DEV_DIR="$(echo "$json_config" | get_json_val "dev_dir" "$HOME/Documents/Develops")"
+    fi
+
+    case "$step_name" in
+        github_login)
+            if gh auth status &>/dev/null; then
+                GITHUB_USER="$(gh api user --jq .login 2>/dev/null || echo "$GITHUB_USER")"
+                log_info "GitHub authenticated as: $GITHUB_USER"
+                return 0
+            else
+                log_error "GitHub not authenticated. Run: gh auth login"
+                return 1
+            fi
+            ;;
+
+        clone_gentle_ai)
+            if [[ -d "$HOME/gentle-ai" ]]; then
+                log_info "gentle-ai already cloned."
+                return 0
+            fi
+            log_info "Cloning Gentle AI..."
+            if git clone https://github.com/Gentleman-Programming/gentle-ai.git "$HOME/gentle-ai"; then
+                log_info "gentle-ai cloned."
+                return 0
+            else
+                log_error "Failed to clone gentle-ai."
+                return 1
+            fi
+            ;;
+
+        setup_gentleman_skills)
+            local skills_dir="$OPENCODE_CONFIG_DIR"
+            [[ -z "$skills_dir" ]] && skills_dir="$HOME/.config/opencode"
+            if [[ -d "$skills_dir/skills/gentleman-skills" ]]; then
+                log_info "Gentleman Skills already installed."
+                return 0
+            fi
+            log_info "Installing Gentleman Skills..."
+            if [[ ! -d "$skills_dir/skills" ]]; then
+                mkdir -p "$skills_dir/skills"
+            fi
+            if git clone https://github.com/Gentleman-Programming/gentleman-skills.git "$skills_dir/skills/gentleman-skills"; then
+                log_info "Gentleman Skills installed."
+                return 0
+            else
+                log_error "Failed to install Gentleman Skills."
+                return 1
+            fi
+            ;;
+
+        setup_engram)
+            if command -v engram &>/dev/null; then
+                log_info "Engram already installed."
+                return 0
+            fi
+            log_info "Installing Engram..."
+            # Reuse install_components logic for engram
+            local engram_status=3
+            install_engram  # Defined in install_components
+            if command -v engram &>/dev/null; then
+                log_info "Engram installed."
+                return 0
+            else
+                log_error "Engram installation failed."
+                return 1
+            fi
+            ;;
+
+        setup_opencode)
+            log_info "Configuring opencode..."
+            if [[ ! -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
+                generate_opencode_json "$OPENCODE_CONFIG_DIR"
+            fi
+            if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
+                log_info "Agent prompts already installed."
+            else
+                copy_agent_templates
+            fi
+            log_info "opencode configured."
+            return 0
+            ;;
+
+        setup_vscode)
+            if ! command -v code &>/dev/null; then
+                log_warn "VSCode not found — skipping extension setup."
+                return 0
+            fi
+            if [[ "${INSTALL_VSCODE:-true}" != "true" ]]; then
+                log_info "VSCode setup skipped by user preference."
+                return 0
+            fi
+            log_info "Installing VSCode extensions..."
+            local extensions=(
+                "bierner.markdown-mermaid"
+                "yzhang.markdown-all-in-one"
+                "opencode.opencode-vscode"
+            )
+            local installed=0
+            for ext in "${extensions[@]}"; do
+                if code --install-extension "$ext" --force 2>/dev/null; then
+                    ((installed++))
+                fi
+            done
+            log_info "VSCode extensions: $installed/${#extensions[@]} installed."
+            return 0
+            ;;
+
+        *)
+            log_error "Unknown step: $step_name"
+            return 1
+            ;;
+    esac
 }
 
 # Export for sub-shells if needed
 export -f wizard_main github_login dev_directory_prompt gentle_ai_prompt
 export -f recognition_questions repo_management_prompt design_orientation_prompt
 export -f mission_prompt install_components setup_sync show_summary save_user_profile
+export -f run_go_step
