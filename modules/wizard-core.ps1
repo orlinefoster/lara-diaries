@@ -662,6 +662,74 @@ function Invoke-BackupPrompt {
     }
 }
 
+# ── GENERATE OPENCODE.JSON ─────────────────────
+function Generate-OpencodeJson {
+    Write-Info "Generando opencode.json..."
+
+    # Locate template
+    $templateDir = Join-Path $PSScriptRoot "..\templates\configs"
+    try { $templateDir = (Resolve-Path $templateDir -ErrorAction Stop).Path } catch {
+        Write-Warn "No se encontro templates/configs/ — saltando generacion."
+        return
+    }
+    $templateFile = Join-Path $templateDir "opencode.json"
+    if (-not (Test-Path -LiteralPath $templateFile)) {
+        Write-Warn "Template no encontrado: $templateFile"
+        return
+    }
+
+    # Read template
+    try {
+        $config = Get-Content -Path $templateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        Write-ErrorMsg "Error leyendo template: $_"
+        return
+    }
+
+    # Engram binary path
+    $engramPath = (Get-Command "engram" -ErrorAction SilentlyContinue).Source
+    if (-not $engramPath) { $engramPath = "engram" }
+    $config.mcp.engram.command[0] = $engramPath
+
+    # Git permission levels from repo management preference
+    $repoMode = $script:WizardAnswers.RepoManagement
+    $gitCommitLevel = "ask"
+    $gitPushLevel = "ask"
+    switch ($repoMode) {
+        "auto"   { $gitCommitLevel = "allow"; $gitPushLevel = "allow" }
+        "ask"    { $gitCommitLevel = "ask";   $gitPushLevel = "ask" }
+        "manual" { $gitCommitLevel = "deny";  $gitPushLevel = "deny" }
+    }
+    $config.permission.bash."git commit *" = $gitCommitLevel
+    $config.permission.bash."git push" = $gitPushLevel
+    $config.permission.bash."git push *" = $gitPushLevel
+
+    # Agent prompts
+    $agentsDir = Join-Path $env:APPDATA "opencode\agents"
+    $planPromptFile = Join-Path $agentsDir "lara-plan.md"
+    $vipPromptFile = Join-Path $agentsDir "lara-vip.md"
+    if (Test-Path -LiteralPath $planPromptFile) {
+        $planPrompt = Get-Content -Path $planPromptFile -Raw -Encoding UTF8
+        $config.agent."lara-plan".prompt = $planPrompt
+    }
+    if (Test-Path -LiteralPath $vipPromptFile) {
+        $vipPrompt = Get-Content -Path $vipPromptFile -Raw -Encoding UTF8
+        $config.agent."lara-vip".prompt = $vipPrompt
+    }
+
+    # Remove gentle-orchestrator (template placeholder only)
+    $config.agent.PSObject.Properties.Remove("gentle-orchestrator")
+
+    # Write output
+    $configDir = Join-Path $env:APPDATA "opencode"
+    if (-not (Test-Path -LiteralPath $configDir)) {
+        $null = New-Item -ItemType Directory -Path $configDir -Force
+    }
+    $outputFile = Join-Path $configDir "opencode.json"
+    $config | ConvertTo-Json -Depth 10 | Set-Content -Path $outputFile -Encoding UTF8 -Force
+    Write-Success "opencode.json generado en: $outputFile"
+}
+
 # ── 9. INSTALL COMPONENTS ────────────────────
 function Install-Components {
     Write-Step "Paso 8/10 - Instalacion de componentes"
@@ -902,6 +970,9 @@ function Install-Components {
     } else {
         Write-Warn "Usuario de GitHub no disponible. Saltando creacion de repos."
     }
+
+    # Generate opencode.json configuration
+    Generate-OpencodeJson
 
     # First backup
     $configRepoDir = Join-Path $HOME "opencode-config"
