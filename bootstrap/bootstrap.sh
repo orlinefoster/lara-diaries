@@ -53,6 +53,272 @@ error() { echo -e "${RED}[✗]${RESET} $*"; }
 title() { echo -e "${CYAN}${BOLD}$*${RESET}"; }
 
 # =============================================================================
+# State Machine -- Lock + Resume for atomic install
+# =============================================================================
+LARA_STATE_DIR="$HOME/.config/lara-diaries"
+
+lara_state_dir() {
+    mkdir -p "$LARA_STATE_DIR" 2>/dev/null
+    echo "$LARA_STATE_DIR"
+}
+
+lara_state_file() {
+    echo "$(lara_state_dir)/state.json"
+}
+
+lara_lock_file() {
+    echo "$(lara_state_dir)/install.lock"
+}
+
+lara_lock_create() {
+    local lock_file
+    lock_file="$(lara_lock_file)"
+    local dir
+    dir="$(dirname "$lock_file")"
+    mkdir -p "$dir" 2>/dev/null
+    {
+        echo "$$"
+        date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'
+        hostname 2>/dev/null || echo "unknown"
+    } > "$lock_file"
+}
+
+lara_lock_remove() {
+    local lock_file
+    lock_file="$(lara_lock_file)"
+    if [[ -f "$lock_file" ]]; then
+        rm -f "$lock_file"
+    fi
+}
+
+lara_lock_status() {
+    local lock_file
+    lock_file="$(lara_lock_file)"
+    if [[ ! -f "$lock_file" ]]; then
+        echo "none"
+        return
+    fi
+    local lock_pid
+    lock_pid="$(head -1 "$lock_file" 2>/dev/null || echo "")"
+    if [[ -z "$lock_pid" ]]; then
+        echo "stale"
+        return
+    fi
+    if kill -0 "$lock_pid" 2>/dev/null; then
+        echo "active"
+    else
+        echo "stale"
+    fi
+}
+
+lara_lock_guard() {
+    local status
+    status="$(lara_lock_status)"
+    case "$status" in
+        "none")
+            return 0
+            ;;
+        "stale")
+            local lock_pid
+            lock_pid="$(head -1 "$(lara_lock_file)" 2>/dev/null || echo "")"
+            if [[ -n "$lock_pid" ]]; then
+                warn "Lock file del proceso PID $lock_pid parece estar obsoleto."
+            else
+                warn "Lock file de instalacion anterior detectado."
+            fi
+            warn "La instalacion parece haber sido interrumpida."
+            echo -n "${CYAN}Eliminarlo y continuar? (s/N): ${RESET}"
+            local response
+            read -r response
+            case "${response,,}" in
+                s|si|yes)
+                    lara_lock_remove
+                    info "Lock eliminado. Continuando..."
+                    return 0
+                    ;;
+                *)
+                    info "Abortando. Ejecuta de nuevo cuando quieras."
+                    exit 1
+                    ;;
+            esac
+            ;;
+        "active")
+            error "Otra instalacion ya esta en progreso."
+            error "Si crees que es un error, borra manualmente: $(lara_lock_file)"
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# State JSON -- Read, Write, Init, Step update
+# =============================================================================
+
+lara_state_read() {
+    local state_file
+    state_file="$(lara_state_file)"
+    if [[ ! -f "$state_file" ]]; then
+        echo ""
+        return
+    fi
+    local content
+    content="$(cat "$state_file" 2>/dev/null || echo "")"
+    if [[ -z "$content" ]]; then
+        echo ""
+        return
+    fi
+    if echo "$content" | grep -q '"version"' 2>/dev/null; then
+        echo "$content"
+    else
+        warn "state.json corrupto o invalido. Se regenerara."
+        rm -f "$state_file" 2>/dev/null
+        echo ""
+    fi
+}
+
+lara_state_write_json() {
+    local json="$1"
+    local state_file
+    state_file="$(lara_state_file)"
+    local dir
+    dir="$(dirname "$state_file")"
+    mkdir -p "$dir" 2>/dev/null
+    printf '%s\n' "$json" > "$state_file"
+}
+
+lara_state_init() {
+    local state_file
+    state_file="$(lara_state_file)"
+    if [[ -f "$state_file" ]]; then
+        return 0
+    fi
+    local install_id
+    install_id="$(uuidgen 2>/dev/null || date '+%s')"
+    local now
+    now="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
+    local install_type="${1:-fresh}"
+    local json
+    json='{
+  "version": 1,
+  "install_id": "'"$install_id"'",
+  "created_at": "'"$now"'",
+  "updated_at": "'"$now"'",
+  "install_type": "'"$install_type"'",
+  "steps": {}
+}'
+    lara_state_write_json "$json"
+}
+
+lara_step_state() {
+    local step_name="$1"
+    local status="$2"
+    local error_msg="${3:-null}"
+    local rollback_action="${4:-null}"
+
+    local state_content
+    state_content="$(lara_state_read)"
+    if [[ -z "$state_content" ]]; then
+        return
+    fi
+
+    local now
+    now="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
+
+    local new_json
+    if command -v python3 &>/dev/null; then
+        new_json="$(python3 -c "
+import sys, json
+state = json.loads('''$state_content''')
+if 'steps' not in state:
+    state['steps'] = {}
+step = state['steps'].get('$step_name', {})
+step['status'] = '$status'
+if '$error_msg' != 'null':
+    step['error'] = '$error_msg'
+else:
+    step['error'] = None
+if '$rollback_action' != 'null':
+    step['rollback'] = '$rollback_action'
+else:
+    step['rollback'] = None
+if '$status' in ('success', 'failed', 'skipped'):
+    step['completed_at'] = '$now'
+elif 'completed_at' not in step or step.get('completed_at') is None:
+    step['completed_at'] = None
+if 'started_at' not in step:
+    step['started_at'] = '$now'
+state['steps']['$step_name'] = step
+state['updated_at'] = '$now'
+print(json.dumps(state, indent=2))
+")"
+    elif command -v jq &>/dev/null; then
+        new_json="$(echo "$state_content" | jq \
+            --arg step "$step_name" \
+            --arg status "$status" \
+            --arg now "$now" \
+            --arg error "${error_msg#null}" \
+            --arg rollback "${rollback_action#null}" \
+            '.steps[$step].status = $status
+             | .steps[$step].error = (if $error == "" then null else $error end)
+             | .steps[$step].rollback = (if $rollback == "" then null else $rollback end)
+             | if $status == "success" or $status == "failed" or $status == "skipped"
+               then .steps[$step].completed_at = $now
+               else . end
+             | if .steps[$step].started_at == null then .steps[$step].started_at = $now else . end
+             | .updated_at = $now' 2>/dev/null)"
+    else
+        # Minimal sed-based fallback
+        local version install_id created_at install_type
+        version="$(echo "$state_content" | grep '"version"' | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/' 2>/dev/null)"
+        install_id="$(echo "$state_content" | grep '"install_id"' | head -1 | sed 's/.*"install_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' 2>/dev/null)"
+        created_at="$(echo "$state_content" | grep '"created_at"' | head -1 | sed 's/.*"created_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' 2>/dev/null)"
+        install_type="$(echo "$state_content" | grep '"install_type"' | head -1 | sed 's/.*"install_type"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' 2>/dev/null)"
+        new_json='{
+  "version": '"${version:-1}"',
+  "install_id": "'"${install_id:-}"'",
+  "created_at": "'"${created_at:-}"'",
+  "updated_at": "'"$now"'",
+  "install_type": "'"${install_type:-fresh}"'",
+  "steps": {
+    "'"$step_name"'": {
+      "status": "'"$status"'",
+      "started_at": "'"$now"'",
+      "completed_at": '"$(if [[ "$status" == "success" || "$status" == "failed" || "$status" == "skipped" ]]; then echo "\"$now\""; else echo "null"; fi)"',
+      "error": '"$error_msg"',
+      "rollback": '"$rollback_action"'
+    }
+  }
+}'
+    fi
+
+    if [[ -n "$new_json" ]]; then
+        lara_state_write_json "$new_json"
+    fi
+}
+
+lara_resume_check() {
+    local state_content
+    state_content="$(lara_state_read)"
+    if [[ -z "$state_content" ]]; then
+        echo "fresh"
+        return
+    fi
+
+    local total_steps success_steps pending_or_failed
+    total_steps="$(echo "$state_content" | grep -c '"status"' 2>/dev/null || echo 0)"
+    success_steps="$(echo "$state_content" | grep '"status"' | grep -c '"success"' 2>/dev/null || echo 0)"
+    pending_or_failed="$(echo "$state_content" | grep '"status"' | grep -cE '"(pending|failed|running)"' 2>/dev/null || echo 0)"
+
+    if [[ "$total_steps" -gt 0 && "$pending_or_failed" -eq 0 ]]; then
+        echo "upgrade"
+    elif [[ "$total_steps" -gt 0 && "$pending_or_failed" -gt 0 ]]; then
+        echo "resume"
+    else
+        echo "fresh"
+    fi
+}
+
+# =============================================================================
 # Banner
 # =============================================================================
 print_banner() {
@@ -232,7 +498,7 @@ dry_run() {
     [[ -d "$HOME/gentleman-guardian-angel" ]] && gga_ok="OK"
     [[ -d "$HOME/engram-memories" ]] && engram_repo_ok="OK"
     [[ -d "$HOME/opencode-config" ]] && config_repo_ok="OK"
-    gh auth status &>/dev/null && gh_user="$(gh api user --jq .login 2>/dev/null || echo '")'"
+    gh auth status &>/dev/null && gh_user="$(gh api user --jq .login 2>/dev/null)"
 
     echo "  +------------------------------------------------------+"
     echo -e "  ${CYAN}|               PLAN DE INSTALACION                    |${RESET}"
@@ -332,7 +598,13 @@ main() {
         exit 0
     fi
 
+    # Lock guard — prevent parallel installs
+    lara_lock_guard
+
     if [[ -n "$NON_INTERACTIVE" ]]; then
+        lara_state_init "fresh"
+        lara_lock_create
+        trap 'lara_lock_remove' EXIT
         noninteractive_main "$NON_INTERACTIVE"
         exit 0
     fi
@@ -340,14 +612,43 @@ main() {
     check_prerequisites
 
     echo ""
-    echo -e "${BOLD}¿Querés que proceda con la configuración completa? (s/N)${RESET}"
+    echo -e "${BOLD}Queres que proceda con la configuracion completa? (s/N)${RESET}"
     echo -n "> "
     read -r proceed
 
     case "${proceed,,}" in
         s|si|y|yes)
+            # Resume check — detect state from previous run
+            lara_state_init
+            local resume_type
+            resume_type="$(lara_resume_check)"
+            if [[ "$resume_type" == "upgrade" ]]; then
+                echo ""
+                warn "Detectada instalacion previa completa."
+                echo -n "${CYAN}Queres reconfigurar (upgrade)? (S/N, predeterminado: N): ${RESET}"
+                local reinstall
+                read -r reinstall
+                case "${reinstall,,}" in
+                    s|si|y|yes)
+                        info "Iniciando upgrade..."
+                        ;;
+                    *)
+                        info "Saliendo sin cambios."
+                        exit 0
+                        ;;
+                esac
+            elif [[ "$resume_type" == "resume" ]]; then
+                echo ""
+                warn "Detectada instalacion interrumpida."
+                info "Reanudando desde el primer paso pendiente..."
+            fi
+
+            # Create install lock
+            lara_lock_create
+            trap 'lara_lock_remove' EXIT
+
             echo ""
-            info "¡Vamos! Iniciando wizard de configuración..."
+            info "Vamos! Iniciando wizard de configuracion..."
 
             # Resolve module path — supports both local clone and curl-pipe usage
             SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo "$HOME/lara-diaries/bootstrap")"
@@ -371,7 +672,7 @@ main() {
         *)
             echo ""
             echo -e "${CYAN}No hay problema. Cuando quieras configurar, corre este script de vuelta.${RESET}"
-            echo -e "${CYAN}¡Nos vemos pronto! 💜${RESET}"
+            echo -e "${CYAN}Nos vemos pronto!${RESET}"
             exit 0
             ;;
     esac

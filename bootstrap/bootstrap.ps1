@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Lara Diaries - Windows Bootstrap
 # Usage: .\bootstrap.ps1 [-Check] [-DryRun] [-NonInteractive <json>]
 # Requires: PowerShell 5.1+ or PowerShell Core 7+
@@ -30,7 +30,7 @@ $script:IsDryRun = $DryRun
 $script:IsCheckOnly = $Check
 $script:NonInteractiveConfig = if ($NonInteractive) { $NonInteractive } else { $null }
 
-# ── BANNER ────────────────────────────────────
+# ---- BANNER -----------------------------------------------------------------
 function Show-Banner {
     Clear-Host
     Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
@@ -46,7 +46,7 @@ function Show-Banner {
     Write-Host ""
 }
 
-# ── OS DETECTION ──────────────────────────────
+# ---- OS DETECTION ------------------------------------------------------------"-"-"-"-
 function Test-WindowsOS {
     $os = [Environment]::OSVersion
     $isWindows = ($os.Platform -eq [System.PlatformID]::Win32NT)
@@ -59,7 +59,222 @@ function Test-WindowsOS {
     return $true
 }
 
-# ── ADMIN CHECK ───────────────────────────────
+# ---- STATE MACHINE -----------------------------------------------------------"-"-"-"-"-
+# Lock file + state.json for atomic install with resume
+
+function Get-LaraStateDir {
+    $dir = Join-Path $env:LOCALAPPDATA "LaraDiaries"
+    if (-not (Test-Path -LiteralPath $dir)) {
+        $null = New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue
+    }
+    return $dir
+}
+
+function Get-LaraStateFile {
+    return Join-Path (Get-LaraStateDir) "state.json"
+}
+
+function Get-LaraLockFile {
+    return Join-Path (Get-LaraStateDir) "install.lock"
+}
+
+function Write-LaraState {
+    param([hashtable]$State)
+    $path = Get-LaraStateFile
+    try {
+        $json = $State | ConvertTo-Json -Compress
+        $json | Set-Content -Path $path -Encoding UTF8 -Force
+    } catch {
+        Write-Host "[!] No se pudo escribir state.json: $_" -ForegroundColor Yellow
+    }
+}
+
+function Read-LaraState {
+    $path = Get-LaraStateFile
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $null
+    }
+    try {
+        $content = Get-Content -Path $path -Raw -Encoding UTF8 -ErrorAction Stop
+        $state = $content | ConvertFrom-Json -ErrorAction Stop
+        return $state
+    } catch {
+        Write-Host "[!] state.json corrupto -- regenerando." -ForegroundColor Yellow
+        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+}
+
+function New-InitialState {
+    param([string]$InstallType = "fresh")
+    $id = [guid]::NewGuid().ToString()
+    $now = (Get-Date).ToString("o")
+    return @{
+        version      = 1
+        install_id   = $id
+        created_at   = $now
+        updated_at   = $now
+        install_type = $InstallType
+        steps        = @{}
+    }
+}
+
+function New-LaraLock {
+    $lockPath = Get-LaraLockFile
+    $pid = [System.Diagnostics.Process]::GetCurrentProcess().Id
+    $timestamp = (Get-Date).ToString("o")
+    $hostname = [Environment]::MachineName
+    $content = "$pid`n$timestamp`n$hostname"
+    try {
+        $content | Set-Content -Path $lockPath -Encoding UTF8 -Force -ErrorAction Stop
+        return $true
+    } catch {
+        Write-Host "[!] No se pudo crear lock file: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Remove-LaraLock {
+    $lockPath = Get-LaraLockFile
+    if (Test-Path -LiteralPath $lockPath) {
+        Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-LaraLockStale {
+    $lockPath = Get-LaraLockFile
+    if (-not (Test-Path -LiteralPath $lockPath)) {
+        return "none"  # no lock
+    }
+    try {
+        $lines = Get-Content -Path $lockPath -Encoding UTF8 -ErrorAction Stop
+        $lockPid = [int]$lines[0].Trim()
+        # Check if process is still running
+        $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
+        if (-not $proc) {
+            return "stale"  # process died
+        }
+        return "active"
+    } catch {
+        return "stale"  # unreadable = stale
+    }
+}
+
+function Get-LaraLockPid {
+    $lockPath = Get-LaraLockFile
+    if (-not (Test-Path -LiteralPath $lockPath)) { return $null }
+    try {
+        $lines = Get-Content -Path $lockPath -Encoding UTF8 -ErrorAction Stop
+        return [int]$lines[0].Trim()
+    } catch { return $null }
+}
+
+function Invoke-LockGuard {
+    $lockStatus = Test-LaraLockStale
+    if ($lockStatus -eq "none") {
+        return $true  # no lock, proceed
+    }
+    if ($lockStatus -eq "stale") {
+        $lockPid = Get-LaraLockPid
+        if ($lockPid) {
+            Write-Host "[!] Lock file del proceso PID $lockPid parece estar obsoleto." -ForegroundColor Yellow
+        } else {
+            Write-Host "[!] Lock file de una instalacion anterior detectado." -ForegroundColor Yellow
+        }
+        Write-Host "    La instalacion parece haber sido interrumpida." -ForegroundColor Yellow
+        $clean = Read-Host "    Eliminarlo y continuar? (S/N, predeterminado: N)"
+        if ($clean -like "S*" -or $clean -like "s*") {
+            Remove-LaraLock
+            Write-Host "[OK] Lock eliminado. Continuando..." -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "[!] Abortando. Ejecuta de nuevo cuando quieras." -ForegroundColor Yellow
+            return $false
+        }
+    }
+    # Active lock
+    Write-Host "[!] Otra instalacion ya esta en progreso." -ForegroundColor Red
+    Write-Host "    Si crees que es un error, borra manualmente:" -ForegroundColor Yellow
+    Write-Host "    $lockPath" -ForegroundColor Yellow
+    return $false
+}
+
+function Get-ResumeState {
+    $state = Read-LaraState
+    if (-not $state -or -not $state.steps) {
+        return $null, @()  # no state, nothing to resume
+    }
+    $completed = @()
+    $pending = @()
+    foreach ($step in $state.steps.PSObject.Properties) {
+        if ($step.Value.status -eq "success") {
+            $completed += $step.Name
+        } else {
+            $pending += $step.Name
+        }
+    }
+    if ($pending.Count -eq 0 -and $completed.Count -gt 0) {
+        # All steps complete ' upgrade scenario
+        return "upgrade", $completed
+    }
+    if ($pending.Count -gt 0) {
+        return "resume", $completed
+    }
+    return $null, @()
+}
+
+function Update-StepState {
+    param(
+        [string]$StepName,
+        [string]$Status,
+        [string]$ErrorMsg = $null,
+        [string]$Rollback = $null
+    )
+    $state = Read-LaraState
+    if (-not $state) {
+        $state = New-InitialState -InstallType "fresh"
+    }
+    if (-not $state.steps) { $state.steps = @{} }
+    $now = (Get-Date).ToString("o")
+    if (-not $state.steps.$StepName) {
+        $state.steps.$StepName = @{
+            started_at = $now
+            completed_at = $null
+            status = "pending"
+            error = $null
+            rollback = $null
+        }
+    }
+    $state.steps.$StepName.status = $Status
+    $state.updated_at = $now
+    if ($Status -eq "success" -or $Status -eq "failed" -or $Status -eq "skipped") {
+        $state.steps.$StepName.completed_at = $now
+    }
+    if ($ErrorMsg) { $state.steps.$StepName.error = $ErrorMsg }
+    if ($Rollback) { $state.steps.$StepName.rollback = $Rollback }
+
+    # Convert back to hashtable for Write-LaraState
+    $ht = @{
+        version      = $state.version
+        install_id   = $state.install_id
+        created_at   = $state.created_at
+        updated_at   = $state.updated_at
+        install_type = $state.install_type
+        steps        = @{}
+    }
+    foreach ($prop in $state.steps.PSObject.Properties) {
+        $ht.steps[$prop.Name] = @{
+            status       = $prop.Value.status
+            started_at   = $prop.Value.started_at
+            completed_at = $prop.Value.completed_at
+            error        = $prop.Value.error
+            rollback     = $prop.Value.rollback
+        }
+    }
+    Write-LaraState -State $ht
+}
+
+# ---- ADMIN CHECK -----------------------------------------------------------
 function Test-AdminRights {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -75,7 +290,7 @@ function Test-AdminRights {
     return $isAdmin
 }
 
-# ── PREREQUISITE CHECK ────────────────────────
+# ---- PREREQUISITE CHECK -----------------------------------------------------"-"-"-"-"-
 function Test-Prerequisite {
     param([string]$Name, [string]$WinGetId, [string]$DownloadUrl)
 
@@ -125,7 +340,7 @@ function Test-Prerequisites {
         node = Test-Prerequisite -Name "node" -WinGetId "OpenJS.NodeJS.LTS" -DownloadUrl "https://nodejs.org/"
     }
 
-    # VSCode is optional — check but don't fail if missing
+    # VSCode is optional -- check but don't fail if missing
     $codeCmd = Get-Command "code" -ErrorAction SilentlyContinue
     if ($codeCmd) {
         Write-Host "  [OK] VSCode encontrado" -ForegroundColor Green
@@ -145,7 +360,7 @@ function Test-Prerequisites {
     return $true
 }
 
-# ── CHECK MODE ────────────────────────────────
+# ---- CHECK MODE ------------------------------------------------------------
 function Start-CheckOnly {
     Write-Host "`n  [CHECK MODE] Solo diagnostico - no se instalara nada.`n" -ForegroundColor Cyan
 
@@ -178,7 +393,7 @@ function Start-CheckOnly {
     Write-Host "  Para simular:  ejecuta .\bootstrap.ps1 -DryRun`n" -ForegroundColor Cyan
 }
 
-# ── DRY-RUN MODE ──────────────────────────────
+# ---- DRY-RUN MODE ----------------------------------------------------------
 function Start-DryRun {
     Write-Host "`n  [DRY-RUN] Plan de instalacion - nada se modificara.`n" -ForegroundColor Cyan
 
@@ -251,8 +466,9 @@ function Start-DryRun {
     Write-Host "  Para instalar de verdad, ejecuta .\bootstrap.ps1 sin parametros.`n" -ForegroundColor Cyan
 }
 
-# ── WIZARD MAIN ───────────────────────────────
+# ---- WIZARD MAIN -----------------------------------------------------------
 function Start-WizardMain {
+    param([string[]]$CompletedSteps = @())
     if ($script:IsCheckOnly) { Start-CheckOnly; return }
     if ($script:IsDryRun) { Start-DryRun; return }
 
@@ -274,10 +490,10 @@ function Start-WizardMain {
     $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
     $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
     . $resolvedPath
-    Start-Wizard
+    Start-Wizard -CompletedSteps $CompletedSteps
 }
 
-# ── ENTRY POINT ───────────────────────────────
+# ---- ENTRY POINT -----------------------------------------------------------
 function Main {
     Show-Banner
     if (-not (Test-WindowsOS)) { exit 1 }
@@ -308,10 +524,49 @@ function Main {
         Write-Host "Resolve los prerequisitos faltantes y volve a ejecutar el script.`n" -ForegroundColor Yellow
         exit 1
     }
-    Start-WizardMain
+
+    # Lock guard -- prevent parallel installs
+    if (-not (Invoke-LockGuard)) { exit 1 }
+
+    # Resume check -- detect state from previous run
+    $resumeType, $completedSteps = Get-ResumeState
+    if ($resumeType -eq "upgrade") {
+        Write-Host "[!] Detectada instalacion previa completa." -ForegroundColor Yellow
+        $reinstall = Read-Host "    Queres reconfigurar (upgrade)? (S/N, predeterminado: N)"
+        if ($reinstall -like "S*" -or $reinstall -like "s*") {
+            Write-Host "[OK] Iniciando upgrade..." -ForegroundColor Green
+        } else {
+            Write-Host "[OK] Saliendo sin cambios." -ForegroundColor Cyan
+            exit 0
+        }
+    } elseif ($resumeType -eq "resume") {
+        Write-Host "[!] Detectada instalacion interrumpida." -ForegroundColor Yellow
+        Write-Host "    Pasos completados: $($completedSteps -join ', ')" -ForegroundColor Cyan
+        Write-Host "    Reanudando desde el primer paso pendiente..." -ForegroundColor Cyan
+    }
+
+    # Create install lock
+    if (-not (New-LaraLock)) {
+        Write-Host "[!] No se pudo crear el lock de instalacion. Abortando." -ForegroundColor Red
+        exit 1
+    }
+
+    try {
+        Start-WizardMain -CompletedSteps $completedSteps
+    } finally {
+        # Always release lock (even on crash/error)
+        Remove-LaraLock
+    }
 }
 
 # Run only if not dot-sourced
 if ($MyInvocation.InvocationName -ne '.') {
     Main
 }
+
+
+
+
+
+
+

@@ -392,6 +392,153 @@ component_status() {
 }
 
 # =============================================================================
+# Rollback & Step State Helpers
+# =============================================================================
+
+# Rollback: remove a directory (used for failed git clones)
+rollback_remove_dir() {
+    local dir="$1"
+    if [[ -d "$dir" ]]; then
+        log_warn "  Rollback: eliminando $dir"
+        rm -rf "$dir" 2>/dev/null || true
+    fi
+}
+
+# Rollback: restore a backed-up config file
+rollback_config() {
+    local backup="$1"
+    local original="$2"
+    if [[ -f "$backup" ]]; then
+        log_warn "  Rollback: restaurando $original desde backup"
+        cp "$backup" "$original" 2>/dev/null || true
+    fi
+}
+
+# Write step state to state.json
+wizard_step_state() {
+    local step_name="$1"
+    local status="$2"
+    local error_msg="${3:-}"
+    local rollback_action="${4:-}"
+
+    # Use bootstrap.sh's lara_step_state if available
+    if command -v lara_step_state &>/dev/null; then
+        lara_step_state "$step_name" "$status" "${error_msg:-null}" "${rollback_action:-null}"
+        return
+    fi
+
+    # Standalone fallback
+    local state_dir="$HOME/.config/lara-diaries"
+    local state_file="$state_dir/state.json"
+    mkdir -p "$state_dir" 2>/dev/null
+
+    local now
+    now="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
+
+    # Read existing state or create new
+    local state_content=""
+    if [[ -f "$state_file" ]]; then
+        state_content="$(cat "$state_file" 2>/dev/null || echo "")"
+    fi
+
+    local new_json=""
+    if [[ -n "$state_content" ]] && echo "$state_content" | grep -q '"version"' 2>/dev/null; then
+        if command -v python3 &>/dev/null; then
+            new_json="$(python3 -c "
+import sys, json
+state = json.loads('''$state_content''')
+if 'steps' not in state:
+    state['steps'] = {}
+step = state['steps'].get('$step_name', {})
+step['status'] = '$status'
+if '$error_msg':
+    step['error'] = '$error_msg'
+else:
+    step['error'] = None
+if '$rollback_action':
+    step['rollback'] = '$rollback_action'
+else:
+    step['rollback'] = None
+if '$status' in ('success', 'failed', 'skipped'):
+    step['completed_at'] = '$now'
+elif 'completed_at' not in step or step.get('completed_at') is None:
+    step['completed_at'] = None
+if 'started_at' not in step:
+    step['started_at'] = '$now'
+state['steps']['$step_name'] = step
+state['updated_at'] = '$now'
+print(json.dumps(state, indent=2))
+")"
+        fi
+    fi
+
+    if [[ -z "$new_json" ]]; then
+        # Create fresh state
+        local install_id
+        install_id="$(uuidgen 2>/dev/null || date '+%s')"
+        new_json='{
+  "version": 1,
+  "install_id": "'"$install_id"'",
+  "created_at": "'"$now"'",
+  "updated_at": "'"$now"'",
+  "install_type": "fresh",
+  "steps": {
+    "'"$step_name"'": {
+      "status": "'"$status"'",
+      "started_at": "'"$now"'",
+      "completed_at": '"$(if [[ "$status" == "success" || "$status" == "failed" || "$status" == "skipped" ]]; then echo "\"$now\""; else echo "null"; fi)"',
+      "error": '"${error_msg:-null}"',
+      "rollback": '"${rollback_action:-null}"'
+    }
+  }
+}'
+    fi
+
+    if [[ -n "$new_json" ]]; then
+        printf '%s\n' "$new_json" > "$state_file"
+    fi
+}
+
+# Check if a step is already completed (for resume)
+wizard_step_is_done() {
+    local step_name="$1"
+    local state_file="$HOME/.config/lara-diaries/state.json"
+    if [[ ! -f "$state_file" ]]; then
+        return 1
+    fi
+    local status
+    status="$(grep -A5 "\"$step_name\"" "$state_file" 2>/dev/null | grep '"status"' | sed 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' 2>/dev/null)"
+    if [[ "$status" == "success" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Run a step with state tracking and rollback on failure
+wizard_run_step() {
+    local step_name="$1"
+    local step_label="$2"
+    local step_func="$3"
+
+    # Skip if already done (resume mode)
+    if wizard_step_is_done "$step_name"; then
+        log_info "Paso '$step_label' ya completado. Omitiendo."
+        return 0
+    fi
+
+    wizard_step_state "$step_name" "running"
+
+    if ! $step_func; then
+        log_error "Paso '$step_label' fallo."
+        wizard_step_state "$step_name" "failed" "Step '$step_label' failed"
+        return 1
+    fi
+
+    wizard_step_state "$step_name" "success"
+    return 0
+}
+
+# =============================================================================
 # 8. Install Components
 # =============================================================================
 install_components() {
@@ -455,6 +602,7 @@ install_components() {
                 fi
             else
                 log_error "Failed to clone gentle-ai. Check internet connection."
+                rollback_remove_dir "$HOME/gentle-ai"
                 return 1
             fi
         fi
@@ -475,6 +623,7 @@ install_components() {
                     log_info "Gentleman Skills installed."
                 else
                     log_warn "Failed to clone Gentleman Skills. Continuing..."
+                    rollback_remove_dir "$skills_dir/gentleman-skills"
                 fi
             fi
         fi
@@ -655,6 +804,7 @@ install_components() {
                 fi
             else
                 log_error "Failed to clone GGA."
+                rollback_remove_dir "$HOME/gentleman-guardian-angel"
             fi
         fi
     else
@@ -1113,17 +1263,22 @@ wizard_main() {
     echo -e "${CYAN}Bienvenida, hermana. Vamos a ponerte todo a punto.${RESET}"
     echo ""
 
-    github_login
-    dev_directory_prompt
-    gentle_ai_prompt
-    recognition_questions
-    repo_management_prompt
-    design_orientation_prompt
-    mission_prompt
-    install_components
-    setup_sync
-    save_user_profile
-    show_summary
+    # Initialize state for interactive wizard
+    if command -v lara_state_init &>/dev/null; then
+        lara_state_init "fresh"
+    fi
+
+    wizard_run_step "github_login"       "GitHub Login"          github_login
+    wizard_run_step "dev_directory"      "Developer Directory"   dev_directory_prompt
+    wizard_run_step "gentle_ai"          "Gentle AI"             gentle_ai_prompt
+    wizard_run_step "recognition"        "Recognition Questions" recognition_questions
+    wizard_run_step "repo_management"    "Repo Management"       repo_management_prompt
+    wizard_run_step "design_orientation" "Design & Style"        design_orientation_prompt
+    wizard_run_step "mission"            "Mission"               mission_prompt
+    wizard_run_step "install_components" "Install Components"    install_components
+    wizard_run_step "setup_sync"         "Setup Sync"            setup_sync
+    wizard_run_step "save_profile"       "Save Profile"          save_user_profile
+    wizard_run_step "show_summary"       "Show Summary"          show_summary
 }
 
 # Export for sub-shells if needed
