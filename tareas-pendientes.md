@@ -5,9 +5,9 @@
 
 ## Resumen Ejecutivo
 
-**22 issues encontrados**: 5 🔴 CRITICAL · 4 🔴 HIGH · 9 🟡 MEDIUM · 4 🟢 LOW
+**30 issues encontrados**: 7 🔴 CRITICAL · 4 🔴 HIGH · 13 🟡 MEDIUM · 6 🟢 LOW
 
-Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos, incluyendo 2 identificados en revisión posterior (H4, M9).
+Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos de dos auditorías posteriores (H4, M9, y 8 issues nuevos encontrados en la segunda auditoría).
 
 ---
 
@@ -87,6 +87,34 @@ cmd := exec.Command("bash", "-c", "source '"+wizardPath+"' && run_go_step '"+ste
 El CI compila para `windows/amd64`, pero en Windows no hay `bash` disponible por defecto. El binario no puede ejecutar ningún step.
 
 **Fix**: Detectar plataforma. En Windows: usar `powershell` o `pwsh` en vez de `bash`, o leer el wizard y ejecutar los pasos directamente en Go.
+
+---
+
+### N1. Typo en `generate_opencode_json()` — variable `$opcode_generated` en vez de `$opencode_generated`
+
+**Archivo**: `modules/wizard-core.sh` línea 880
+**Severidad**: CRITICAL — todo usuario del shell wizard obtiene opencode.json con placeholders literales
+
+`generate_opencode_json()` (creada como parte del fix de C2) setea `opencode_generated=true` en línea 861 (python3) o 877 (jq), pero la condición en línea 880 lee `$opcode_generated` (falta "en"). Siempre evalúa false, cae al fallback que copia el template con `{{ENGRAM_PATH}}` literal.
+
+```bash
+local opencode_generated=false    # línea 821 — correcto
+..." && opencode_generated=true   # línea 861 — correcto
+if [[ "$opcode_generated" == "true" ]]; then  # línea 880 — TYPO
+```
+
+**Fix**: Cambiar `$opcode_generated` a `$opencode_generated` en la línea 880.
+
+---
+
+### N2. `TestRunHandlers_Execute` llama `step.Run("", "")` sin pasar por `standaloneRun`
+
+**Archivo**: `cmd/lara-installer/install_test.go` líneas 149-160
+**Severidad**: CRITICAL — test siempre falla en CI con Go
+
+El test llama `step.Run("", "")` esperando que ejecute `standaloneRun`, pero ese switch está en `runInstall()` (línea 288-295), no dentro de `step.Run`. El `Run` closure siempre llama `shellOut(wizardPath, ...)` con path vacío → falla.
+
+**Fix**: Reestructurar el test para que ejecute `runInstall()` o mock el shellOut.
 
 ---
 
@@ -319,6 +347,52 @@ func doctorSelfCheck() doctorCheck {
 
 ---
 
+### N3. CI build escribe a `../../release/` pero el directorio puede no existir
+
+**Archivo**: `.github/workflows/release-installer.yml` línea 71
+**Severidad**: MEDIUM — CI pipeline falla en tag push
+
+El job `build` ejecuta `go build -o "../../release/$BINARY_NAME" .` pero `go build -o` no crea directorios padres. El `mkdir -p release` está en el job `release` (separado, línea 100). Si `release/` no existe en el checkout, el build falla.
+
+**Fix**: Agregar `mkdir -p release` antes del `go build` en el job `build`.
+
+---
+
+### N4. PS wizard Engram download detecta mal ARM64 en Windows
+
+**Archivo**: `modules/wizard-core.ps1` línea 736
+**Severidad**: MEDIUM — Windows ARM64 descarga binario x86
+
+Usa `[Environment]::Is64BitOperatingSystem` que retorna `$true` tanto para x64 como ARM64. `bootstrap.ps1` (línea 19) lo hace correctamente con `$env:PROCESSOR_ARCHITECTURE`.
+
+```powershell
+# Mal: ambos x64 y ARM64 dan true
+$arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "arm64" }
+
+# Bien:
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { "arm64" } else { "amd64" }
+```
+
+**Fix**: Reemplazar la detección con `$env:PROCESSOR_ARCHITECTURE`.
+
+---
+
+### N5. `doctor_test.go` asume que `go` está disponible en PATH
+
+**Archivo**: `cmd/lara-installer/doctor_test.go` líneas 176-186
+**Severidad**: MEDIUM — test flaky en distintos entornos
+
+`TestCheckPrereq_Found` usa `checkPrereq("go")` y espera `"OK"`. En sistemas sin Go (CI de release, entornos limpios), el test falla.
+
+```go
+// go should always be in PATH during tests  ← incorrecto
+c := checkPrereq("go")
+```
+
+**Fix**: Usar un comando que SÍ existe siempre (como `sh` o un mock), o verificar con subtests separados.
+
+---
+
 ## 🟢 LOW — Estilo, mínimos
 
 ### L1. `LockFile()` está en `state.go` en vez de `lock.go`
@@ -357,6 +431,28 @@ El fix de `runDoctorChecks` introdujo una función duplicada en el test file, ro
 
 ---
 
+### N6. Windows `shellOut()` intenta sourcear `.sh` via PowerShell
+
+**Archivo**: `cmd/lara-installer/install.go` líneas 59-60
+**Severidad**: LOW — edge case improbable
+
+Si el Go binary encuentra `pwsh`/`powershell` en Windows, ejecuta `& 'wizardPath'; Start-Wizard`. Pero `wizardPath` apunta a `wizard-core.sh` (script Bash), no al `.ps1`. No se puede sourcear un `.sh` con `&` en PowerShell. Es un dead code path porque en Windows `wizard-core.sh` probablemente no existe.
+
+**Fix**: Verificar que el wizard a ejecutar coincida con el shell detectado (`.sh` → bash, `.ps1` → pwsh).
+
+---
+
+### N7. CI usa `docs/installer-state-schema.md` como release body
+
+**Archivo**: `.github/workflows/release-installer.yml` línea 108
+**Severidad**: LOW — cosmetic
+
+`body_path: docs/installer-state-schema.md` — el cuerpo del release es un documento de esquema técnico en vez de changelog/release notes.
+
+**Fix**: Apuntar a un changelog o generar release notes dinámicamente.
+
+---
+
 ## Prioridad de Corrección
 
 ```mermaid
@@ -365,12 +461,15 @@ graph TD
     C2 --> C3[JSON_DATA no seteado]
     C3 --> C4[Variables GRAY/PKG_MANAGER]
     C4 --> C5[bash hardcodeado Windows]
-    C5 --> H1[Alinear step names]
+    C5 --> N1[Typo opcode_generated]
+    N1 --> N2[TestRunHandlers bypass]
+    N2 --> H1[Alinear step names]
     H1 --> H2[--check/--dry-run dead code]
     H2 --> H3[shell injection surface]
     H3 --> H4[Sin rollback global]
     H4 --> M1-M9[Medium fixes]
-    M1-M9 --> L1-L4[Low fixes]
+    M1-M9 --> N3-N5[New Medium]
+    N3-N5 --> L1-L7[Low fixes]
 ```
 
 | # | Issue | Archivo | Esfuerzo | Prioridad | Estado |
@@ -392,6 +491,13 @@ graph TD
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
 | 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | 📝 |
 | 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | 📝 |
+| 18 | Typo `$opcode_generated` en generate_opencode_json | `wizard-core.sh` | 2 min | 🔴 N1 | 📝 |
+| 19 | TestRunHandlers_Execute bypass standaloneRun | `install_test.go` | 15 min | 🔴 N2 | 📝 |
+| 20 | CI build dir `../../release/` puede no existir | `release-installer.yml` | 2 min | 🟡 N3 | 📝 |
+| 21 | PS wizard arch detection wrong para ARM64 | `wizard-core.ps1` | 5 min | 🟡 N4 | 📝 |
+| 22 | doctor_test asume `go` en PATH | `doctor_test.go` | 5 min | 🟡 N5 | 📝 |
+| 23 | Windows shellOut sourcea .sh via PowerShell | `install.go` | 10 min | 🟢 N6 | 📝 |
+| 24 | CI release body es schema doc | `release-installer.yml` | 5 min | 🟢 N7 | 📝 |
 
 ---
 
