@@ -141,21 +141,24 @@ Borrás la carpeta `lara-diaries`, desinstalás opencode con `winget uninstall O
 The Lara Diaries installer uses a **two-phase hybrid** design:
 
 - **Phase 1 (Shell)** — `bootstrap.ps1` / `bootstrap.sh` manage state.json, install lock, resume, and rollback directly from PowerShell/Bash. This phase works independently of any binary.
-- **Phase 2 (Go binary)** — `cmd/lara-installer` is a self-contained Go binary with the same state machine, lock-protected installs, step lifecycle tracking, and a `doctor` command for system health checks.
+- **Phase 2 (Go binary)** — `cmd/lara-installer` is a self-contained Go binary with the same state machine, lock-protected installs, step lifecycle tracking, and a `doctor` command for system health checks. Built with Go 1.22+, tested with 35+ unit tests.
 - **Fallback chain** — When the Go binary is not found, the shell wrapper downloads it from GitHub Releases. If the download fails, it falls back to the script-based wizard (`modules/wizard-core.ps1` / `wizard-core.sh`).
 - **State machine** — Each install step transitions through `pending → running → success/failed/skipped`. The state is persisted to `state.json` for resume support and crash recovery.
 - **Lock protection** — A PID-based lock file (`install.lock`) prevents concurrent installations and detects stale installs from interrupted runs.
+- **Testing** — The Go binary has full test coverage (`go test ./...`). Shell functions are tested with `bats` (18 tests). CI runs both on every push.
 
 ## 🧭 Estructura del proyecto (para curiosas)
 
 ```
 lara-diaries/
 ├── bootstrap-agent.md     # El "plan" que sigue Lara en tu primer uso
-├── bootstrap/             # Scripts de instalación (Windows y Linux)
-├── modules/               # Lógica del asistente de configuración
+├── bootstrap/             # Scripts de instalación entry point (Windows y Linux)
+├── modules/               # Lógica del asistente de configuración (shell/ps)
+├── cmd/lara-installer/    # Go binary: instalador autónomo + doctor
 ├── templates/             # Plantillas para crear agentes personalizados
 ├── guardian/              # Reglas de seguridad del sistema
 ├── scripts/               # Sincronización de memorias
+├── tests/                 # Tests de shell con bats
 ├── design.md              # Documento de diseño (para quien quiera contribuir)
 └── README.md              # Este archivo
 ```
@@ -171,6 +174,18 @@ El proyecto es abierto y toda ayuda es bienvenida.
 3. Mandá un pull request
 
 Si encontrás un bug o tenés una idea, abrí un [issue](https://github.com/orlinefoster/lara-diaries/issues).
+
+### Para developers
+
+El proyecto tiene dos áreas principales:
+
+| Área | Stack | Cómo testear |
+|------|-------|-------------|
+| **Install wizard** (Go) | Go 1.22+, `cmd/lara-installer/` | `go test ./cmd/lara-installer/...` |
+| **Shell wizard** (Bash) | Bash + bats | `bats tests/wizard-core.bats` |
+| **PowerShell wizard** | PowerShell 7+, Pester | `Invoke-Pester tests/` |
+
+Todos los tests corren en CI en cada push.
 
 ---
 
