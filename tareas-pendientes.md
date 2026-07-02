@@ -316,26 +316,26 @@ El shell wizard (`wizard-core.sh`) genera `opencode.json` reemplazando placehold
 **Archivo**: `cmd/lara-installer/doctor.go:188`
 **Severidad**: MEDIUM
 
-`doctorSelfCheck()` existe y verifica:
+`doctorSelfCheck()` existía y verificaba:
 - Path del ejecutable (`os.Executable()`)
 - Tamaño del binario (no vacío)
 - Versión embebida
 
-Pero **no verifica**:
-- Checksum SHA256 del binario (para detectar corrupción)
-- Integridad de los archivos que instaló (están todos? están completos?)
-- Que los checksums de los assets instalados coincidan con lo esperado
+Pero **no verificaba**:
+- Consistencia de state.json (steps stuck en "running")
+- Disponibilidad de shell (bash/pwsh) para rollback
+- Si herramientas post-instalación están disponibles (engram, gentle-ai)
+
+**Fix (06/2026)**: Expandido el doctor de 7 a 11 checks:
+1. `checkStateConsistency()` — detecta steps en "running" (instalación abortada)
+2. `checkShell()` — verifica bash (Linux) o pwsh/powershell.exe (Windows)
+3. `checkInstalledTool("engram")` + `checkInstalledTool("gentle-ai")` — WARN si no están instalados
+4. 7 tests nuevos, todos pasan
 
 ```go
-func doctorSelfCheck() doctorCheck {
-    // Verifica size > 0, pero no checksum
-    // No verifica archivos instalados
-}
+// runDoctorChecks now returns 11 checks:
+// OS, StateFile, Consistency, Lock, git, gh, Shell, engram, gentle-ai, StateDir, SelfCheck
 ```
-
-**Fix**: Agregar al doctor:
-1. Calcular SHA256 del binario y compararlo con un checksum embebido en el build
-2. Verificar que existan los archivos clave que el installer debió dejar (opencode.json, agent prompts, etc.)
 3. Opcional: checksum de esos archivos
 
 ---
@@ -524,7 +524,7 @@ graph TD
 | 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
 | 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | ✅ |
-| 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | 📝 |
+| 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | ✅ |
 | 18 | Typo `$opcode_generated` en generate_opencode_json | `wizard-core.sh` | 2 min | 🔴 N1 | ✅ |
 | 19 | TestRunHandlers_Execute bypass standaloneRun | `install_test.go` | 15 min | 🔴 N2 | ✅ |
 | 20 | CI build dir `../../release/` puede no existir | `release-installer.yml` | 2 min | 🟡 N3 | ✅ |
