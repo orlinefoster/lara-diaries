@@ -26,6 +26,7 @@ if command -v tput &>/dev/null; then
     : "${CYAN:=$(tput setaf 6)}"
     : "${BOLD:=$(tput bold)}"
     : "${RESET:=$(tput sgr0)}"
+    : "${GRAY:=$(tput setaf 8 2>/dev/null || echo '\e[90m')}"
 fi
 # If tput is unavailable, leave colors as empty strings (no-color fallback)
 
@@ -486,10 +487,44 @@ print(json.dumps(state, indent=2))
     fi
 
     if [[ -z "$new_json" ]]; then
-        # Create fresh state
-        local install_id
-        install_id="$(uuidgen 2>/dev/null || date '+%s')"
-        new_json='{
+        # Create fresh state (use python3 for safe JSON generation)
+        if command -v python3 &>/dev/null; then
+            new_json="$(LWS_STEP_NAME="$step_name" \
+            LWS_STATUS="$status" \
+            LWS_ERROR_MSG="${error_msg:-}" \
+            LWS_ROLLBACK="${rollback_action:-}" \
+            LWS_NOW="$now" \
+            python3 -c "
+import json, os, uuid
+step_name = os.environ.get('LWS_STEP_NAME', '')
+status = os.environ.get('LWS_STATUS', '')
+error_msg = os.environ.get('LWS_ERROR_MSG', '') or None
+rollback = os.environ.get('LWS_ROLLBACK', '') or None
+now = os.environ.get('LWS_NOW', '')
+
+state = {
+    'version': 1,
+    'install_id': str(uuid.uuid4()),
+    'created_at': now,
+    'updated_at': now,
+    'install_type': 'fresh',
+    'steps': {
+        step_name: {
+            'status': status,
+            'started_at': now,
+            'completed_at': now if status in ('success', 'failed', 'skipped') else None,
+            'error': error_msg,
+            'rollback': rollback
+        }
+    }
+}
+print(json.dumps(state, indent=2))
+")"
+        else
+            # Last resort fallback (no python3 available)
+            local install_id
+            install_id="$(uuidgen 2>/dev/null || date '+%s')"
+            new_json='{
   "version": 1,
   "install_id": "'"$install_id"'",
   "created_at": "'"$now"'",
@@ -505,6 +540,7 @@ print(json.dumps(state, indent=2))
     }
   }
 }'
+        fi
     fi
 
     if [[ -n "$new_json" ]]; then
@@ -561,6 +597,25 @@ wizard_run_step() {
         return 0
     fi
 
+    # Check for alias step names from the Go binary bridge
+    local alias_map="install_components:clone_gentle_ai,setup_gentleman_skills,setup_engram,setup_opencode,setup_vscode"
+    case "$step_name" in
+        install_components)
+            # If ALL Go binary sub-steps are complete, skip this too
+            local all_go_done=true
+            for substep in clone_gentle_ai setup_gentleman_skills setup_engram setup_opencode setup_vscode; do
+                if ! wizard_step_is_done "$substep" 2>/dev/null; then
+                    all_go_done=false
+                    break
+                fi
+            done
+            if [[ "$all_go_done" == "true" ]]; then
+                log_info "Paso '$step_label' ya completado (via Go binary steps). Omitiendo."
+                return 0
+            fi
+            ;;
+    esac
+
     wizard_step_state "$step_name" "running"
 
     if ! $step_func; then
@@ -570,6 +625,348 @@ wizard_run_step() {
     fi
 
     wizard_step_state "$step_name" "success"
+    return 0
+}
+
+# =============================================================================
+# Extracted Install Helpers (callable from run_go_step bridge)
+# =============================================================================
+
+# Install Engram binary from GitHub Releases with Homebrew/go fallback.
+# Returns 0 on success, 1 on failure.
+install_engram() {
+    local engram_ok=false
+
+    # Priority 1: Binary download from GitHub Releases (zero deps — just curl + tar)
+    if [[ "$engram_ok" != "true" ]]; then
+        log_info "Downloading Engram binary from GitHub Releases..."
+        local engram_tmpdir="/tmp/engram-install-$$"
+        mkdir -p "$engram_tmpdir"
+        trap 'rm -rf "$engram_tmpdir"' EXIT
+
+        local engram_latest_url="https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
+        local engram_response
+        engram_response="$(curl -sL -w "\n%{http_code}" "$engram_latest_url")"
+        local engram_http_code
+        engram_http_code="$(echo "$engram_response" | tail -n1)"
+        local engram_body
+        engram_body="$(echo "$engram_response" | sed '$d')"
+
+        if [[ "$engram_http_code" == "200" ]]; then
+            local engram_tag
+            engram_tag="$(echo "$engram_body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+            local engram_version="${engram_tag#v}"
+            local engram_os_arch="linux_amd64"
+            [[ "$(uname -s)" == "Darwin" ]] && engram_os_arch="darwin_amd64"
+            [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && engram_os_arch="${engram_os_arch%_*}_arm64"
+
+            local engram_archive="engram_${engram_version}_${engram_os_arch}.tar.gz"
+            local engram_dl_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/${engram_archive}"
+            local engram_checksums_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/checksums.txt"
+
+            log_info "Downloading ${engram_archive}..."
+            if curl -sfL -o "${engram_tmpdir}/${engram_archive}" "$engram_dl_url"; then
+                # Verify checksum
+                if curl -sL -o "${engram_tmpdir}/checksums.txt" "$engram_checksums_url"; then
+                    local engram_expected
+                    engram_expected="$(grep "${engram_archive}" "${engram_tmpdir}/checksums.txt" | awk '{print $1}')"
+                    local engram_actual
+                    if command -v sha256sum &>/dev/null; then
+                        engram_actual="$(sha256sum "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
+                    elif command -v shasum &>/dev/null; then
+                        engram_actual="$(shasum -a 256 "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
+                    fi
+                    if [[ -n "$engram_expected" && -n "$engram_actual" && "$engram_expected" == "$engram_actual" ]]; then
+                        log_info "Checksum verified."
+                    else
+                        log_warn "Checksum verification skipped or mismatch."
+                    fi
+                fi
+
+                # Extract and install
+                tar -xzf "${engram_tmpdir}/${engram_archive}" -C "$engram_tmpdir"
+                local engram_install_dir="${HOME}/.local/bin"
+                mkdir -p "$engram_install_dir"
+                if cp "${engram_tmpdir}/engram" "$engram_install_dir/engram" 2>/dev/null; then
+                    chmod +x "$engram_install_dir/engram"
+                    if [[ ":$PATH:" == *":${engram_install_dir}:"* ]]; then
+                        log_info "Engram installed to ${engram_install_dir}/engram"
+                    else
+                        log_info "Engram installed to ${engram_install_dir}/engram (add to PATH)"
+                    fi
+                    engram_ok=true
+                else
+                    log_warn "Could not copy engram binary to ${engram_install_dir}."
+                fi
+            else
+                log_warn "Failed to download Engram binary."
+            fi
+        else
+            log_warn "GitHub API returned HTTP ${engram_http_code} (rate limited?)."
+        fi
+    fi
+
+    # Priority 2: Homebrew (if user already has it)
+    if [[ "$engram_ok" != "true" ]] && command -v brew &>/dev/null; then
+        log_info "Homebrew found — installing via brew tap..."
+        if brew tap Gentleman-Programming/homebrew-tap 2>/dev/null && brew install engram 2>/dev/null; then
+            log_info "Engram installed via Homebrew."
+            engram_ok=true
+        else
+            log_warn "Homebrew install failed, trying fallback..."
+        fi
+    fi
+
+    # Priority 3: go install (if Go toolchain is available)
+    if [[ "$engram_ok" != "true" ]] && command -v go &>/dev/null; then
+        log_info "Falling back to go install..."
+        if go install github.com/Gentleman-Programming/engram/cmd/engram@latest 2>/dev/null; then
+            log_info "Engram installed via go install."
+            engram_ok=true
+        else
+            log_warn "go install failed."
+        fi
+    fi
+
+    if [[ "$engram_ok" != "true" ]]; then
+        log_error "Could not install Engram."
+        log_info "Install manually: https://github.com/Gentleman-Programming/engram#quick-start"
+        return 1
+    fi
+    return 0
+}
+
+# Copy Lara agent templates with variable substitutions.
+# Uses global variables: OPENCODE_CONFIG_DIR, MISSION, PRONOUN, SKILL_LEVEL,
+# ASSISTANCE_MODE, STYLE.
+copy_agent_templates() {
+    local templates_dir="$1"
+    if [[ -z "$templates_dir" || ! -d "$templates_dir" ]]; then
+        log_error "Templates directory not found: ${templates_dir:-<none>}"
+        return 1
+    fi
+
+    log_info "Creating Lara agent files from templates..."
+    mkdir -p "$OPENCODE_CONFIG_DIR/agents"
+
+    local discretion="moderate"
+    case "$MISSION" in
+        personal-important) discretion="high-caution" ;;
+        work)               discretion="moderate" ;;
+        vm)                 discretion="relaxed" ;;
+        lab-raspberry)      discretion="very-relaxed" ;;
+    esac
+
+    if [[ -f "$templates_dir/agents/lara-plan.md" ]]; then
+        sed \
+            -e "s/{{PRONOUN}}/$PRONOUN/g" \
+            -e "s/{{SKILL_LEVEL}}/$SKILL_LEVEL/g" \
+            -e "s/{{ASSISTANCE_MODE}}/$ASSISTANCE_MODE/g" \
+            -e "s/{{DISCRETION}}/$discretion/g" \
+            -e "s/{{STYLE}}/$STYLE/g" \
+            "$templates_dir/agents/lara-plan.md" \
+            > "$OPENCODE_CONFIG_DIR/agents/lara-plan.md"
+        log_info "Created: agents/lara-plan.md"
+    fi
+
+    if [[ -f "$templates_dir/agents/lara-vip.md" ]]; then
+        sed \
+            -e "s/{{PRONOUN}}/$PRONOUN/g" \
+            -e "s/{{SKILL_LEVEL}}/$SKILL_LEVEL/g" \
+            -e "s/{{ASSISTANCE_MODE}}/$ASSISTANCE_MODE/g" \
+            -e "s/{{DISCRETION}}/$discretion/g" \
+            "$templates_dir/agents/lara-vip.md" \
+            > "$OPENCODE_CONFIG_DIR/agents/lara-vip.md"
+        log_info "Created: agents/lara-vip.md"
+    fi
+
+    return 0
+}
+
+# Generate opencode.json from template with variable substitution.
+# Uses global variables: OPENCODE_CONFIG_DIR, REPO_MANAGEMENT, templates_dir,
+# LARA_PLAN_PROMPT, LARA_VIP_PROMPT.
+generate_opencode_json() {
+    local templates_dir="$1"
+    if [[ -z "$templates_dir" || ! -f "$templates_dir/configs/opencode.json" ]]; then
+        log_error "opencode.json template not found in: ${templates_dir:-<none>}"
+        return 1
+    fi
+
+    log_info "Generating opencode.json configuration..."
+
+    local engram_path
+    engram_path="$(command -v engram || echo "engram")"
+
+    # Map repo management to permission levels
+    local git_commit_level="ask"
+    local git_push_level="ask"
+    case "$REPO_MANAGEMENT" in
+        auto)   git_commit_level="allow"; git_push_level="allow" ;;
+        ask)    git_commit_level="ask";   git_push_level="ask" ;;
+        manual) git_commit_level="deny";  git_push_level="deny" ;;
+    esac
+
+    # Read agent prompts for embedding into config
+    local lara_plan_prompt=""
+    local lara_vip_prompt=""
+    if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
+        lara_plan_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-plan.md")"
+    fi
+    if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-vip.md" ]]; then
+        lara_vip_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-vip.md")"
+    fi
+
+    local opencode_output="/tmp/opencode-$$.json"
+    local opencode_generated=false
+
+    # Cleanup temp file on exit
+    trap 'rm -f "$opencode_output"' RETURN
+
+    # Method 1: python3 — full JSON manipulation (escaping, structure, multi-line)
+    if command -v python3 &>/dev/null; then
+        ENGRAM_BIN="$engram_path" \
+        GIT_COMMIT="$git_commit_level" \
+        GIT_PUSH="$git_push_level" \
+        LARA_PLAN_PROMPT="${lara_plan_prompt}" \
+        LARA_VIP_PROMPT="${lara_vip_prompt}" \
+        python3 -c "
+import json, os
+
+with open('$templates_dir/configs/opencode.json') as f:
+    data = json.load(f)
+
+# MCP engram command path
+if os.environ.get('ENGRAM_BIN'):
+    data['mcp']['engram']['command'][0] = os.environ['ENGRAM_BIN']
+
+# Git permission levels
+git_commit = os.environ.get('GIT_COMMIT', 'ask')
+git_push = os.environ.get('GIT_PUSH', 'ask')
+data['permission']['bash']['git commit *'] = git_commit
+data['permission']['bash']['git push'] = git_push
+data['permission']['bash']['git push *'] = git_push
+
+# Agent prompts (multi-line, properly escaped by json.dumps)
+if os.environ.get('LARA_PLAN_PROMPT'):
+    data['agent']['lara-plan']['prompt'] = os.environ['LARA_PLAN_PROMPT']
+if os.environ.get('LARA_VIP_PROMPT'):
+    data['agent']['lara-vip']['prompt'] = os.environ['LARA_VIP_PROMPT']
+
+# Remove gentle-orchestrator (not used in bootstrap, template placeholder only)
+data['agent'].pop('gentle-orchestrator', None)
+
+with open('$opencode_output', 'w') as f:
+    json.dump(data, f, indent=2)
+" && opencode_generated=true
+    fi
+
+    # Method 2: jq — for simple value replacements (no multi-line prompt support)
+    if [[ "$opencode_generated" != "true" ]] && command -v jq &>/dev/null; then
+        jq \
+            --arg engram "$engram_path" \
+            --arg git_commit "$git_commit_level" \
+            --arg git_push "$git_push_level" \
+            '.mcp.engram.command[0] = $engram
+             | .permission.bash."git commit *" = $git_commit
+             | .permission.bash."git push" = $git_push
+             | .permission.bash."git push *" = $git_push
+             | del(.agent."gentle-orchestrator")
+             | .agent."lara-plan".prompt = (.agent."lara-plan".prompt | gsub("{{LARA_PLAN_PROMPT}}"; ""))
+             | .agent."lara-vip".prompt = (.agent."lara-vip".prompt | gsub("{{LARA_VIP_PROMPT}}"; ""))' \
+            "$templates_dir/configs/opencode.json" > "$opencode_output" 2>/dev/null && opencode_generated=true
+    fi
+
+    if [[ "$opcode_generated" == "true" ]]; then
+        mkdir -p "$OPENCODE_CONFIG_DIR"
+        mv "$opencode_output" "$OPENCODE_CONFIG_DIR/opencode.json"
+        log_info "Generated: opencode.json"
+    else
+        log_warn "Neither python3 nor jq available — copying template with placeholders."
+        log_warn "Edit $OPENCODE_CONFIG_DIR/opencode.json manually to fill in values."
+        cp "$templates_dir/configs/opencode.json" "$OPENCODE_CONFIG_DIR/opencode.json"
+    fi
+}
+
+# =============================================================================
+# wizard_check_only — diagnose system without installing (--check mode)
+# =============================================================================
+wizard_check_only() {
+    log_title "System Check (--check mode)"
+    echo "────────────────────────────────────────"
+    echo ""
+
+    local all_ok=true
+
+    # Prerequisites
+    for cmd in git gh curl; do
+        if command -v "$cmd" &>/dev/null; then
+            log_info "$cmd: found"
+        else
+            log_error "$cmd: NOT found"
+            all_ok=false
+        fi
+    done
+
+    # Components
+    for comp in "Engram" "VSCode"; do
+        local bin=""
+        case "$comp" in
+            Engram) bin="engram" ;;
+            VSCode) bin="code" ;;
+        esac
+        if command -v "$bin" &>/dev/null; then
+            log_info "$comp: installed"
+        else
+            log_warn "$comp: not installed"
+        fi
+    done
+
+    # GitHub auth
+    if gh auth status &>/dev/null; then
+        log_info "GitHub: authenticated"
+    else
+        log_warn "GitHub: NOT authenticated"
+    fi
+
+    # State file
+    if [[ -f "$HOME/.config/lara-diaries/state.json" ]]; then
+        log_info "State file: exists"
+    else
+        log_warn "State file: not found (first run)"
+    fi
+
+    if [[ "$all_ok" == "true" ]]; then
+        log_info "All prerequisites satisfied."
+    fi
+    return 0
+}
+
+# =============================================================================
+# wizard_dry_run — show install plan without making changes (--dry-run mode)
+# =============================================================================
+wizard_dry_run() {
+    log_title "Installation Plan (--dry-run mode)"
+    echo "────────────────────────────────────────"
+    echo ""
+
+    DRY_RUN=true
+
+    # Check prerequisites
+    wizard_check_only
+
+    echo ""
+    log_title "Plan:"
+    echo "  • GitHub Login"
+    echo "  • Clone gentle-ai"
+    echo "  • Install Gentleman Skills"
+    echo "  • Install Engram"
+    echo "  • Configure opencode"
+    echo "  • Install VSCode (optional)"
+    echo "  • Setup sync"
+    echo "  • Save profile"
+    echo ""
+    log_info "Run without --dry-run to execute this plan."
     return 0
 }
 
@@ -674,105 +1071,7 @@ install_components() {
     elif [[ $engram_status -eq 2 ]]; then
         : # dry-run
     else
-        log_info "Installing Engram from official sources..."
-        local engram_ok=false
-
-        # Priority 1: Binary download from GitHub Releases (zero deps — just curl + tar)
-        if [[ "$engram_ok" != "true" ]]; then
-            log_info "Downloading Engram binary from GitHub Releases..."
-            local engram_tmpdir="/tmp/engram-install-$$"
-            mkdir -p "$engram_tmpdir"
-            trap '[ -n "${engram_tmpdir:-}" ] && rm -rf "$engram_tmpdir"' EXIT
-
-            local engram_latest_url="https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
-            local engram_response
-            engram_response="$(curl -sL -w "\n%{http_code}" "$engram_latest_url")"
-            local engram_http_code
-            engram_http_code="$(echo "$engram_response" | tail -n1)"
-            local engram_body
-            engram_body="$(echo "$engram_response" | sed '$d')"
-
-            if [[ "$engram_http_code" == "200" ]]; then
-                local engram_tag
-                engram_tag="$(echo "$engram_body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-                local engram_version="${engram_tag#v}"
-                local engram_os_arch="linux_amd64"
-                [[ "$(uname -s)" == "Darwin" ]] && engram_os_arch="darwin_amd64"
-                [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && engram_os_arch="${engram_os_arch%_*}_arm64"
-
-                local engram_archive="engram_${engram_version}_${engram_os_arch}.tar.gz"
-                local engram_dl_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/${engram_archive}"
-                local engram_checksums_url="https://github.com/Gentleman-Programming/engram/releases/download/${engram_tag}/checksums.txt"
-
-                log_info "Downloading ${engram_archive}..."
-                if curl -sfL -o "${engram_tmpdir}/${engram_archive}" "$engram_dl_url"; then
-                    # Verify checksum
-                    if curl -sL -o "${engram_tmpdir}/checksums.txt" "$engram_checksums_url"; then
-                        local engram_expected
-                        engram_expected="$(grep "${engram_archive}" "${engram_tmpdir}/checksums.txt" | awk '{print $1}')"
-                        local engram_actual
-                        if command -v sha256sum &>/dev/null; then
-                            engram_actual="$(sha256sum "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
-                        elif command -v shasum &>/dev/null; then
-                            engram_actual="$(shasum -a 256 "${engram_tmpdir}/${engram_archive}" | awk '{print $1}')"
-                        fi
-                        if [[ -n "$engram_expected" && -n "$engram_actual" && "$engram_expected" == "$engram_actual" ]]; then
-                            log_info "Checksum verified."
-                        else
-                            log_warn "Checksum verification skipped or mismatch."
-                        fi
-                    fi
-
-                    # Extract and install
-                    tar -xzf "${engram_tmpdir}/${engram_archive}" -C "$engram_tmpdir"
-                    local engram_install_dir="${HOME}/.local/bin"
-                    mkdir -p "$engram_install_dir"
-                    if cp "${engram_tmpdir}/engram" "$engram_install_dir/engram" 2>/dev/null; then
-                        chmod +x "$engram_install_dir/engram"
-                        if [[ ":$PATH:" == *":${engram_install_dir}:"* ]]; then
-                            log_info "Engram installed to ${engram_install_dir}/engram"
-                        else
-                            log_info "Engram installed to ${engram_install_dir}/engram (add to PATH)"
-                        fi
-                        engram_ok=true
-                    else
-                        log_warn "Could not copy engram binary to ${engram_install_dir}."
-                    fi
-                else
-                    log_warn "Failed to download Engram binary."
-                fi
-            else
-                log_warn "GitHub API returned HTTP ${engram_http_code} (rate limited?)."
-            fi
-        fi
-
-        # Priority 2: Homebrew (if user already has it)
-        if [[ "$engram_ok" != "true" ]] && command -v brew &>/dev/null; then
-            log_info "Homebrew found — installing via brew tap..."
-            if brew tap Gentleman-Programming/homebrew-tap 2>/dev/null && brew install engram 2>/dev/null; then
-                log_info "Engram installed via Homebrew."
-                engram_ok=true
-            else
-                log_warn "Homebrew install failed, trying fallback..."
-            fi
-        fi
-
-        # Priority 3: go install (if Go toolchain is available)
-        if [[ "$engram_ok" != "true" ]] && command -v go &>/dev/null; then
-            log_info "Falling back to go install..."
-            if go install github.com/Gentleman-Programming/engram/cmd/engram@latest 2>/dev/null; then
-                log_info "Engram installed via go install."
-                engram_ok=true
-            else
-                log_warn "go install failed."
-            fi
-        fi
-
-        if [[ "$engram_ok" != "true" ]]; then
-            log_error "Could not install Engram."
-            log_info "Install manually: https://github.com/Gentleman-Programming/engram#quick-start"
-            return 1
-        fi
+        install_engram || return 1
     fi
 
     # --- 8d. VSCode (optional) ---
@@ -784,6 +1083,11 @@ install_components() {
         elif [[ $vscode_status -eq 2 ]]; then
             : # dry-run
         else
+            local PKG_MANAGER=""
+            if command -v apt &>/dev/null; then PKG_MANAGER="apt"
+            elif command -v dnf &>/dev/null; then PKG_MANAGER="dnf"
+            elif command -v pacman &>/dev/null; then PKG_MANAGER="pacman"
+            fi
             case "$PKG_MANAGER" in
                 apt)
                     sudo apt install -y code 2>/dev/null || {
@@ -848,136 +1152,8 @@ install_components() {
 
     # --- 8f. Create Lara Agents from templates ---
     if [[ -n "$templates_dir" ]]; then
-        log_info "Creating Lara agent files from templates..."
-        mkdir -p "$OPENCODE_CONFIG_DIR/agents"
-
-        # Map mission to discretion level
-        local discretion="moderate"
-        case "$MISSION" in
-            personal-important) discretion="high-caution" ;;
-            work)               discretion="moderate" ;;
-            vm)                 discretion="relaxed" ;;
-            lab-raspberry)      discretion="very-relaxed" ;;
-        esac
-
-        # --- Lara-Plan ---
-        if [[ -f "$templates_dir/agents/lara-plan.md" ]]; then
-            sed \
-                -e "s/{{PRONOUN}}/$PRONOUN/g" \
-                -e "s/{{SKILL_LEVEL}}/$SKILL_LEVEL/g" \
-                -e "s/{{ASSISTANCE_MODE}}/$ASSISTANCE_MODE/g" \
-                -e "s/{{DISCRETION}}/$discretion/g" \
-                -e "s/{{STYLE}}/$STYLE/g" \
-                "$templates_dir/agents/lara-plan.md" \
-                > "$OPENCODE_CONFIG_DIR/agents/lara-plan.md"
-            log_info "Created: agents/lara-plan.md"
-        fi
-
-        # --- Lara-VIP ---
-        if [[ -f "$templates_dir/agents/lara-vip.md" ]]; then
-            sed \
-                -e "s/{{PRONOUN}}/$PRONOUN/g" \
-                -e "s/{{SKILL_LEVEL}}/$SKILL_LEVEL/g" \
-                -e "s/{{ASSISTANCE_MODE}}/$ASSISTANCE_MODE/g" \
-                -e "s/{{DISCRETION}}/$discretion/g" \
-                "$templates_dir/agents/lara-vip.md" \
-                > "$OPENCODE_CONFIG_DIR/agents/lara-vip.md"
-            log_info "Created: agents/lara-vip.md"
-        fi
-
-        # --- opencode.json ---
-        if [[ -f "$templates_dir/configs/opencode.json" ]]; then
-            log_info "Generating opencode.json configuration..."
-
-            local engram_path
-            engram_path="$(command -v engram || echo "engram")"
-
-            # Map repo management to permission levels
-            local git_commit_level="ask"
-            local git_push_level="ask"
-            case "$REPO_MANAGEMENT" in
-                auto)   git_commit_level="allow"; git_push_level="allow" ;;
-                ask)    git_commit_level="ask";   git_push_level="ask" ;;
-                manual) git_commit_level="deny";  git_push_level="deny" ;;
-            esac
-
-            # Read agent prompts for embedding into config
-            local lara_plan_prompt=""
-            local lara_vip_prompt=""
-            if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
-                lara_plan_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-plan.md")"
-            fi
-            if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-vip.md" ]]; then
-                lara_vip_prompt="$(cat "$OPENCODE_CONFIG_DIR/agents/lara-vip.md")"
-            fi
-
-            local opencode_output="/tmp/opencode-$$.json"
-            local opencode_generated=false
-
-            # Method 1: python3 — full JSON manipulation (escaping, structure, multi-line)
-            if command -v python3 &>/dev/null; then
-                ENGRAM_BIN="$engram_path" \
-                GIT_COMMIT="$git_commit_level" \
-                GIT_PUSH="$git_push_level" \
-                LARA_PLAN_PROMPT="${lara_plan_prompt}" \
-                LARA_VIP_PROMPT="${lara_vip_prompt}" \
-                python3 -c "
-import json, os
-
-with open('$templates_dir/configs/opencode.json') as f:
-    data = json.load(f)
-
-# MCP engram command path
-if os.environ.get('ENGRAM_BIN'):
-    data['mcp']['engram']['command'][0] = os.environ['ENGRAM_BIN']
-
-# Git permission levels
-git_commit = os.environ.get('GIT_COMMIT', 'ask')
-git_push = os.environ.get('GIT_PUSH', 'ask')
-data['permission']['bash']['git commit *'] = git_commit
-data['permission']['bash']['git push'] = git_push
-data['permission']['bash']['git push *'] = git_push
-
-# Agent prompts (multi-line, properly escaped by json.dumps)
-if os.environ.get('LARA_PLAN_PROMPT'):
-    data['agent']['lara-plan']['prompt'] = os.environ['LARA_PLAN_PROMPT']
-if os.environ.get('LARA_VIP_PROMPT'):
-    data['agent']['lara-vip']['prompt'] = os.environ['LARA_VIP_PROMPT']
-
-# Remove gentle-orchestrator (not used in bootstrap, template placeholder only)
-data['agent'].pop('gentle-orchestrator', None)
-
-with open('$opencode_output', 'w') as f:
-    json.dump(data, f, indent=2)
-" && opencode_generated=true
-            fi
-
-            # Method 2: jq — for simple value replacements (no multi-line prompt support)
-            if [[ "$opencode_generated" != "true" ]] && command -v jq &>/dev/null; then
-                jq \
-                    --arg engram "$engram_path" \
-                    --arg git_commit "$git_commit_level" \
-                    --arg git_push "$git_push_level" \
-                    '.mcp.engram.command[0] = $engram
-                     | .permission.bash."git commit *" = $git_commit
-                     | .permission.bash."git push" = $git_push
-                     | .permission.bash."git push *" = $git_push
-                     | del(.agent."gentle-orchestrator")
-                     | .agent."lara-plan".prompt = (.agent."lara-plan".prompt | gsub("{{LARA_PLAN_PROMPT}}"; ""))
-                     | .agent."lara-vip".prompt = (.agent."lara-vip".prompt | gsub("{{LARA_VIP_PROMPT}}"; ""))' \
-                    "$templates_dir/configs/opencode.json" > "$opencode_output" 2>/dev/null && opencode_generated=true
-            fi
-
-            if [[ "$opencode_generated" == "true" ]]; then
-                mkdir -p "$OPENCODE_CONFIG_DIR"
-                mv "$opencode_output" "$OPENCODE_CONFIG_DIR/opencode.json"
-                log_info "Generated: opencode.json"
-            else
-                log_warn "Neither python3 nor jq available — copying template with placeholders."
-                log_warn "Edit $OPENCODE_CONFIG_DIR/opencode.json manually to fill in values."
-                cp "$templates_dir/configs/opencode.json" "$OPENCODE_CONFIG_DIR/opencode.json"
-            fi
-        fi
+        copy_agent_templates "$templates_dir"
+        generate_opencode_json "$templates_dir"
     else
         log_warn "Skipping agent file creation (templates not found)."
     fi
@@ -1328,7 +1504,9 @@ run_go_step() {
 
     # Parse config into global vars if provided (non-interactive mode)
     if [[ -n "$json_config" ]]; then
-        GITHUB_USER="$(echo "$json_config" | get_json_val "github_user" "")"
+        # set JSON_DATA so get_json_val() can find it
+        JSON_DATA="$json_config"
+        GITHUB_USER="$(get_json_val "github_user" "")"
         PRONOUN="$(echo "$json_config" | get_json_val "pronoun" "")"
         SKILL_LEVEL="$(echo "$json_config" | get_json_val "skill_level" "me-defiendo")"
         ASSISTANCE_MODE="$(echo "$json_config" | get_json_val "assistance_mode" "medium")"
@@ -1396,10 +1574,7 @@ run_go_step() {
                 return 0
             fi
             log_info "Installing Engram..."
-            # Reuse install_components logic for engram
-            local engram_status=3
-            install_engram  # Defined in install_components
-            if command -v engram &>/dev/null; then
+            if install_engram; then
                 log_info "Engram installed."
                 return 0
             else
@@ -1410,13 +1585,24 @@ run_go_step() {
 
         setup_opencode)
             log_info "Configuring opencode..."
-            if [[ ! -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
-                generate_opencode_json "$OPENCODE_CONFIG_DIR"
+            local templates_dir=""
+            local this_dir
+            this_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
+            if [[ -d "$this_dir/../templates" ]]; then
+                templates_dir="$(cd "$this_dir/../templates" && pwd)"
+            elif [[ -d "$HOME/lara-diaries/templates" ]]; then
+                templates_dir="$HOME/lara-diaries/templates"
             fi
-            if [[ -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
-                log_info "Agent prompts already installed."
+
+            if [[ -n "$templates_dir" ]]; then
+                if [[ ! -f "$OPENCODE_CONFIG_DIR/agents/lara-plan.md" ]]; then
+                    copy_agent_templates "$templates_dir"
+                fi
+                if [[ ! -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
+                    generate_opencode_json "$templates_dir"
+                fi
             else
-                copy_agent_templates
+                log_warn "Templates not found — skipping agent file and config generation."
             fi
             log_info "opencode configured."
             return 0

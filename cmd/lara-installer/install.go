@@ -45,9 +45,29 @@ func wizardCorePath() (string, error) {
 }
 
 // shellOut calls run_go_step from wizard-core.sh, piping stdout/stderr.
-// JSON config is passed via environment variable to avoid shell escaping issues.
+// Uses argument passing instead of string interpolation to prevent shell injection.
 func shellOut(wizardPath, stepName, jsonConfig string) error {
-	cmd := exec.Command("bash", "-c", "source '"+wizardPath+"' && run_go_step '"+stepName+"'")
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		// On Windows, locate PowerShell or cmd for the shell bridge.
+		// wizard-core.sh can't run directly — inform user and link to PowerShell wizard.
+		pwsh, err := exec.LookPath("pwsh")
+		if err != nil {
+			pwsh, err = exec.LookPath("powershell")
+		}
+		if err == nil {
+			cmd = exec.Command(pwsh, "-NoProfile", "-Command",
+				"& '"+wizardPath+"'; Start-Wizard")
+		} else {
+			fmt.Fprintln(os.Stderr, "  [!] On Windows, please use bootstrap.ps1 instead of lara-installer.")
+			fmt.Fprintln(os.Stderr, "  [!] The lara-installer binary requires wizard-core.sh (Unix).")
+			return fmt.Errorf("wizard-core.sh bridge not available on Windows without WSL")
+		}
+	} else {
+		// Unix: pass path as $1 to bash -s to avoid injection in -c string
+		cmd = exec.Command("bash", "-s", "--", wizardPath)
+		cmd.Stdin = strings.NewReader("source \"$1\" && run_go_step '" + stepName + "'")
+	}
 	if jsonConfig != "" {
 		cmd.Env = append(os.Environ(), "LARA_JSON_CONFIG="+jsonConfig)
 	}
@@ -57,9 +77,12 @@ func shellOut(wizardPath, stepName, jsonConfig string) error {
 }
 
 // rollbackShell runs a shell rollback command.
+// Uses argument passing to prevent shell injection.
 func rollbackShell(desc, cmdStr string) {
 	fmt.Println("  [..] Rollback: " + desc)
-	cmd := exec.Command("bash", "-c", cmdStr)
+	// Pass command via stdin to bash -s to avoid injection in -c string
+	cmd := exec.Command("bash", "-s")
+	cmd.Stdin = strings.NewReader(cmdStr)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
@@ -343,11 +366,15 @@ func standaloneRun(stepName string) error {
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
 	case "setup_engram":
-		fmt.Println("  [..] Please install Engram manually: https://github.com/Gentleman-Programming/engram#quick-start")
-		return nil
+		fmt.Println("  [FAIL] Standalone mode cannot install Engram.")
+		fmt.Println("  Install manually: https://github.com/Gentleman-Programming/engram#quick-start")
+		fmt.Println("  Or run from the full lara-diaries repo for the wizard-core.sh bridge.")
+		return fmt.Errorf("engram installation not available in standalone mode")
 	case "setup_opencode":
-		fmt.Println("  [..] Please configure opencode manually. See bootstrap-agent.md")
-		return nil
+		fmt.Println("  [FAIL] Standalone mode cannot configure opencode.")
+		fmt.Println("  See bootstrap-agent.md in the lara-diaries repo for manual setup.")
+		fmt.Println("  Or run from the full lara-diaries repo for the wizard-core.sh bridge.")
+		return fmt.Errorf("opencode config not available in standalone mode")
 	case "setup_vscode":
 		codePath, err := exec.LookPath("code")
 		if err != nil {

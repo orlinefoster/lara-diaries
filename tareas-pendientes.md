@@ -1,258 +1,307 @@
-# Tareas Pendientes — Lara Diaries Installer Review
+# Tareas Pendientes — Lara Diaries Full Audit
 
-> Generado: 2026-07-02 tras revisión de `feat/standalone-installer-phase-4`
+> Generado: 2026-07-02 tras auditoría completa del proyecto (25+ archivos)
+> Fuente: auditoría orquestada vía `sdd-explore`
 
 ## Resumen Ejecutivo
 
-El repo migró de un bootstrap 100% scripts a una arquitectura híbrida en dos
-fases (shell + binario Go). La infraestructura base (state machine, lock,
-doctor) está sólida, pero el binario Go es un **esqueleto sin lógica real** y
-hay bugs activos de seguridad y regresión funcional.
+**21 issues encontrados**: 5 🔴 CRITICAL · 3 🔴 HIGH · 8 🟡 MEDIUM · 5 🟢 LOW
+
+Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos.
 
 ---
 
-## 🔴 CRITICAL
+## 🔴 CRITICAL — Bugs que rompen funcionalidad
 
-### 1. Binario Go no instala nada — todos los steps son stubs
+### C1. `runDoctorChecks()` definida dos veces → no compila
 
-**Archivo**: `cmd/lara-installer/install.go`
-**Severidad**: CRITICAL — el binario no sirve para instalar
+**Archivo**: `cmd/lara-installer/doctor.go:18` + `cmd/lara-installer/doctor_test.go:198`
+**Severidad**: CRITICAL — `go test` falla
 
-Cada `Run()` function en `install.go` solo printea lo que *haría*:
+`doctor.go:18` define `runDoctorChecks()` como función del package (con `doctorSelfCheck`).
+`doctor_test.go:198` define OTRO `runDoctorChecks()` en el test file.
 
-```go
-Run: func() error {
-    fmt.Println("  [..] Would clone Gentle AI repository...")
-    return nil
-},
-```
+Go no permite dos funciones con el mismo nombre en el mismo package, incluso en test files.
 
-56KB de lógica real en `modules/wizard-core.sh` son completamente inaccesibles.
-Si alguien corre `lara-installer install`, avanza 6 pasos sin instalar NADA.
-
-**Fix**: Que cada step de Go shell out a la función correspondiente de
-`wizard-core.sh`, o portar la lógica a Go. La opción pragmática es shell out.
+**Fix**: Eliminar la función duplicada en `doctor_test.go`. El test debe llamar a la función real de `doctor.go`.
 
 ---
 
-### 2. `go 1.26` en go.mod — no existe
+### C2. `run_go_step()` llama 3 funciones que no existen
 
-**Archivo**: `cmd/lara-installer/go.mod`
-**Severidad**: CRITICAL — no se puede compilar
+**Archivo**: `modules/wizard-core.sh` líneas 1401, 1414, 1419
+**Severidad**: CRITICAL — Go binary no puede instalar Engram ni configurar opencode
 
-```go
-go 1.26
-```
+Cuando el Go binary ejecuta steps vía `run_go_step()`, llama a:
 
-Go 1.26 no se ha liberado (julio 2026 → lo razonable es go 1.22–1.24).
-Cualquier intento de `go build` falla.
+| Step | Line | Función llamada | ¿Existe? |
+|------|------|-----------------|----------|
+| `setup_engram` | 1401 | `install_engram` | ❌ — la lógica está inlined en `install_components()` |
+| `setup_opencode` | 1414 | `generate_opencode_json` | ❌ — nunca definida |
+| `setup_opencode` | 1419 | `copy_agent_templates` | ❌ — nunca definida |
 
-**Fix**: Cambiar a `go 1.22` (o la versión estable más antigua que soporte
-el código).
+**Fix**: Extraer esas funciones de su contexto inline o definirlas como funciones independientes en `wizard-core.sh`.
 
 ---
 
-### 3. Shell injection en `wizard_step_state()` — path de python3
+### C3. JSON config del Go binary es completamente ignorado
 
-**Archivo**: `modules/wizard-core.sh` — función `wizard_step_state()`
-**Severidad**: CRITICAL — seguridad
+**Archivo**: `modules/wizard-core.sh` — `run_go_step()` (línea 1325) y `get_json_val()` (línea 1199)
+**Severidad**: CRITICAL — flag `--config` del Go binary no tiene efecto
+
+`run_go_step()` recibe el JSON en `$json_config` (arg o `LARA_JSON_CONFIG`), pero `get_json_val()` lee de `$JSON_DATA`:
 
 ```bash
-python3 -c "
-...
-step['status'] = '$status'
-if '$error_msg':
-    step['error'] = '$error_msg'
-"
+python3 -c "..." <<< "$JSON_DATA"   # ← usa $JSON_DATA, no stdin
 ```
 
-Si `$status`, `$step_name` o `$error_msg` contienen una comilla simple (`'`),
-el script de Python se rompe o ejecuta código arbitrario. Esto es una
-**vulnerabilidad activa** porque estos valores pueden venir del usuario
-(nombre de paso, mensaje de error).
+Y `$JSON_DATA` **nunca se setea** dentro de `run_go_step()` — solo se setea en `wizard_noninteractive()` (línea 1212). Todas las variables resuelven a su default.
 
-**Fix**: Pasar valores por environment variables en vez de interpolación en
-string, o usar `jq` para construir el JSON.
+**Fix**: Setear `JSON_DATA="$json_config"` al inicio de `run_go_step()`, antes de usarlo.
 
 ---
 
-## 🔴 HIGH
+### C4. `${GRAY}` y `${PKG_MANAGER}` — variables sin definir rompen wizard con `set -u`
 
-### 4. `--non-interactive` perdido en el nuevo bootstrap.sh
+**Archivo**: `modules/wizard-core.sh` líneas 667, 787, 821, 846
+**Severidad**: CRITICAL — wizard aborta inmediatamente
 
-**Archivo**: `bootstrap/bootstrap.sh`
-**Severidad**: HIGH — rompe AI-driven install
+El script usa `set -euo pipefail` (nounset activo), pero:
 
-El `bootstrap.sh` anterior tenía `--check`, `--dry-run`, `--non-interactive
-<json>`. El nuevo solo acepta `[install|doctor|--version]`. En el fallback a
-`wizard-core.sh`, llama `wizard_main()` que es **interactivo** — un agente AI
-que esperaba `--non-interactive` ahora se cuelga esperando input humano.
+- `${GRAY}` se usa en 3 líneas (667, 821, 846) pero **nunca se declara** — solo existen `GREEN`, `YELLOW`, `RED`, `CYAN`, `BOLD`, `RESET`
+- `${PKG_MANAGER}` se usa en línea 787 pero **nunca se define**
 
-**Fix**: Restaurar el parsing de flags. Si `--non-interactive` está presente y
-se cae al fallback, pasar el JSON a `wizard_noninteractive()`.
+**Fix**: Agregar `GRAY` a las declaraciones de color. Detectar `PKG_MANAGER` con `command -v` o darle un default.
 
 ---
 
-### 5. Windows nunca usa el binario Go
+### C5. Go binary hardcodea `bash` — no funciona en Windows
 
-**Archivo**: `bootstrap/bootstrap.ps1`
-**Severidad**: HIGH — la mitad de la arquitectura no funciona en Windows
-
-`bootstrap.ps1` fue reescrito como thin wrapper pero **nunca verifica si el
-binario existe localmente ni lo descarga**. Windows siempre cae al wizard
-PowerShell, nunca puede ejecutar `lara-installer.exe`.
-
-**Fix**: Implementar en PowerShell el mismo patrón que `bootstrap.sh`:
-verificar `Get-BinaryPath`, descargar con `Invoke-WebRequest`, verificar SHA256,
-`exec` o fallback.
-
----
-
-### 6. Sin GitHub Actions para build + release del binario
-
-**Archivo**: inexistente (faltaría `.github/workflows/release-installer.yml`)
-**Severidad**: HIGH — nadie puede obtener el binario
-
-`bootstrap.sh` descarga de:
-```
-https://github.com/orlinefoster/lara-diaries/releases/latest/download/lara-installer-linux-amd64
-```
-
-Pero no hay CI/CD que compile, firme, genere checksums y suba los binarios
-para las 4 plataformas objetivo.
-
-**Fix**: Crear workflow que buildée para `linux/{amd64,arm64}`,
-`darwin/{amd64,arm64}`, `windows/amd64`, genere `*.sha256`, y suba a
-GitHub Releases.
-
----
-
-## 🟡 MEDIUM
-
-### 7. `wizard_step_is_done()` usa grep/sed sobre JSON
-
-**Archivo**: `modules/wizard-core.sh`
-**Severidad**: MEDIUM — falsos positivos en resume
-
-```bash
-status="$(grep -A5 "\"$step_name\"" "$state_file" | grep '"status"' | sed '...')"
-```
-
-Si el nombre de un step aparece como substring en otro campo del JSON, el
-grep matchea el paso equivocado. Debe usar python3 o jq para parseo exacto.
-
----
-
-### 8. Nombres de steps divergentes Go vs Shell
-
-**Archivos**: `cmd/lara-installer/install.go` vs `modules/wizard-core.sh`
-**Severidad**: MEDIUM — state.json no portable entre runtimes
-
-| Go steps | Shell steps |
-|---|---|
-| `github_login` | `github_login` ✅ |
-| `clone_gentle_ai` | — |
-| `setup_gentleman_skills` | — |
-| `setup_engram` | — |
-| `setup_opencode` | — |
-| `setup_vscode` | — |
-| — | `dev_directory` |
-| — | `recognition_questions` |
-| — | `repo_management` |
-| — | `design_orientation` |
-| — | `mission` |
-| — | `install_components` |
-| — | `setup_sync` |
-| — | `save_profile` |
-| — | `show_summary` |
-
-Solo 1 de 15 pasos coincide. Si se alterna entre Go y shell, el state.json
-es inservible.
-
-**Fix**: Alinear los steps. Opción pragmática: que el Go binary llame a
-funciones shell y use los mismos nombres.
-
----
-
-### 9. `bootstrap.ps1` arranca con BOM UTF-8
-
-**Archivo**: `bootstrap/bootstrap.ps1`
-**Severidad**: MEDIUM — problemas en PowerShell 5.1 sin BOM
-
-El diff muestra `﻿#!/usr/bin/env pwsh` — el BOM `U+FEFF` al inicio puede
-causar problemas de parsing en PowerShell 5.1 en algunas configuraciones.
-Además, `#!/usr/bin/env pwsh` es un shebang de Unix que PowerShell ignora
-en Windows pero confunde en editors.
-
----
-
-### 10. Test `TestDoctorResult_StatusValues` llama función inexistente
-
-**Archivo**: `cmd/lara-installer/doctor_test.go`
-**Severidad**: MEDIUM — no compila (además de go 1.26)
+**Archivo**: `cmd/lara-installer/install.go` línea 50
+**Severidad**: CRITICAL — cross-compile para Windows es inservible
 
 ```go
-result := runDoctorChecks()
+cmd := exec.Command("bash", "-c", "source '"+wizardPath+"' && run_go_step '"+stepName+"'")
 ```
 
-`runDoctorChecks()` no existe como función exportada en `doctor.go`. El test
-no compila.
+El CI compila para `windows/amd64`, pero en Windows no hay `bash` disponible por defecto. El binario no puede ejecutar ningún step.
+
+**Fix**: Detectar plataforma. En Windows: usar `powershell` o `pwsh` en vez de `bash`, o leer el wizard y ejecutar los pasos directamente en Go.
 
 ---
 
-### 11. Sin rollback de pasos ya completados
+## 🔴 HIGH — Features que no funcionan como se espera
 
-**Archivo**: `cmd/lara-installer/install.go`
-**Severidad**: MEDIUM — UX de recuperación limitada
+### H1. Step names completamente divergentes — `state.json` incompatible
 
-Si el paso 3 falla y hace rollback de sí mismo, los pasos 1-2 quedan como
-`success` en state.json. No hay un mecanismo para "undo" completo. En el
-shell tampoco hay rollback de pasos anteriores.
+**Archivos**: `cmd/lara-installer/install.go` vs `modules/wizard-core.sh` vs `modules/wizard-core.ps1`
+**Severidad**: HIGH — resume roto entre runtimes
+
+Solo **1 de 17** step names coincide entre Go, shell wizard y PS wizard.
+
+| Go binary (6) | Shell wizard (10) | PS wizard (11) |
+|--------------|-------------------|----------------|
+| `github_login` ✅ | `github_login` ✅ | `github_login` ✅ |
+| `clone_gentle_ai` | — | — |
+| `setup_gentleman_skills` | — | — |
+| `setup_engram` | — | — |
+| `setup_opencode` | — | — |
+| `setup_vscode` | — | — |
+| — | `dev_directory` | `dev_directory` |
+| — | `gentle_ai` | `gentle_ai_prompt` |
+| — | `recognition` | `recognition_questions` |
+| — | `repo_management` | `repo_management` |
+| — | `design_orientation` | `design_orientation` |
+| — | `mission` | `mission` |
+| — | `install_components` | `install_components` |
+| — | `setup_sync` | `setup_sync` |
+| — | `save_profile` | — |
+| — | `show_summary` | `show_summary` |
+| — | — | `backup` |
+
+**Fix**: Alinear los nombres. El Go binary debe usar los mismos nombres que el shell wizard. Opción pragmática: que el Go binary mapee a los nombres shell.
 
 ---
 
-## 🟢 LOW
+### H2. `--check` y `--dry-run` en `bootstrap.sh` llaman funciones inexistentes
 
-### 12. `wizard_step_state()` sobrescribe `started_at`
+**Archivo**: `bootstrap/bootstrap.sh` líneas 156-168
+**Severidad**: HIGH — flags existen pero son dead code
+
+```bash
+if type wizard_check_only &>/dev/null 2>&1; then   # NUNCA definida
+    wizard_check_only
+else
+    echo "Check mode not available in script fallback."   # SIEMPRE imprime esto
+fi
+```
+
+Tanto `wizard_check_only` como `wizard_dry_run` no existen en `wizard-core.sh`.
+
+**Fix**: Implementar ambas funciones en `wizard-core.sh`.
+
+---
+
+### H3. Shell injection surface en `shellOut()` de Go binary
+
+**Archivo**: `cmd/lara-installer/install.go` línea 50
+**Severidad**: HIGH — seguridad
+
+```go
+cmd := exec.Command("bash", "-c", "source '"+wizardPath+"' && run_go_step '"+stepName+"'")
+```
+
+Si `wizardPath` contiene una comilla simple (e.g., `/home/user/lara's/...`), hay command injection. Bajo riesgo porque los paths vienen del código, pero el patrón es inseguro.
+
+**Fix**: Pasar `wizardPath` como argumento a bash y usar `$1` dentro del script, o sanitizar el path.
+
+---
+
+## 🟡 MEDIUM — Inconsistencias, paridad incompleta
+
+### M1. No hay backup step en shell wizard (PowerShell sí tiene)
 
 **Archivo**: `modules/wizard-core.sh`
-**Severidad**: LOW — pérdida de datos de timing
+**Severidad**: MEDIUM
 
-Cada llamada setea `started_at = $now`, incluso cuando el paso ya está
-corriendo y se está marcando como `success`. Go lo hace bien a través de
-`UpdateStep`.
+`wizard-core.ps1` tiene `Backup-ExistingConfig` e `Invoke-BackupPrompt` que respaldan `opencode.json`, AGENTS.md, agents, plugins, commands, skills. `wizard-core.sh` no tiene equivalente.
 
-**Fix**: Solo setear `started_at` si no existe o si el status es `running`.
+**Fix**: Implementar backup de configuración existente en `wizard-core.sh`.
 
 ---
 
-### 13. `LockFile()` está en `state.go` en vez de `lock.go`
+### M2. `bootstrap.ps1` hardcodea Windows amd64 solamente
 
-**Archivo**: `cmd/lara-installer/state.go`
-**Severidad**: LOW — estilo/código
+**Archivo**: `bootstrap/bootstrap.ps1` línea 19
+**Severidad**: MEDIUM
 
-La función `LockFile()` está definida en `state.go` (líneas 83-85) en vez de
-en `lock.go` donde estaría más natural. No afecta funcionalidad.
+```powershell
+function Get-BinaryName {
+    return "lara-installer-windows-amd64.exe"
+}
+```
+
+No soporta Windows ARM64. `bootstrap.sh` detecta dinámicamente `uname -m`.
+
+**Fix**: Detectar arquitectura en PowerShell con `$env:PROCESSOR_ARCHITECTURE`.
 
 ---
 
-### 14. Doctor no tiene self-check
+### M3. CI referencia `go.sum` que no existe
 
-**Archivo**: `cmd/lara-installer/doctor.go`
+**Archivo**: `.github/workflows/release-installer.yml` línea 62
+**Severidad**: MEDIUM
+
+```yaml
+cache-dependency-path: cmd/lara-installer/go.sum
+```
+
+El módulo Go tiene cero dependencias externas — `go.sum` nunca se genera.
+
+**Fix**: Cambiar a `cmd/lara-installer/go.mod` o eliminar el `cache-dependency-path`.
+
+---
+
+### M4. Archivos documentados en `design.md` que no existen
+
+**Archivo**: `design.md` sección 4
+**Severidad**: MEDIUM
+
+`docs/ARCHITECTURE_DECISIONS.md` y `docs/TROUBLESHOOTING.md` están listados pero nunca fueron creados. El directorio `docs/` solo contiene `installer-state-schema.md` que NO está listado.
+
+**Fix**: Crear los archivos faltantes o actualizar `design.md`.
+
+---
+
+### M5. Archivos existen pero no están documentados en `design.md`
+
+**Archivos**: varios
+**Severidad**: MEDIUM
+
+| Archivo | ¿En design.md? |
+|---------|---------------|
+| `bootstrap/bootstrap.Tests.ps1` | ❌ |
+| `cmd/lara-installer/` (directorio completo) | ❌ |
+| `.github/workflows/release-installer.yml` | ❌ |
+| `tareas-pendientes.md` | ❌ |
+| `docs/installer-state-schema.md` | ❌ |
+
+**Fix**: Actualizar `design.md` con la estructura actual del proyecto.
+
+---
+
+### M6. Fresh-state path en `wizard_step_state()` sigue interpolando en JSON
+
+**Archivo**: `modules/wizard-core.sh` líneas 488-507
+**Severidad**: MEDIUM
+
+El python3 path (líneas 446-484) usa env vars correctamente. Pero el fresh-state fallback (cuando no existe `state.json`) sigue usando interpolación directa:
+
+```bash
+'"${error_msg:-null}"'   # se rompe si error_msg contiene "
+```
+
+**Fix**: Usar el mismo patrón de env vars en el fresh-state path.
+
+---
+
+### M7. PowerShell wizard no genera `opencode.json`
+
+**Archivo**: `modules/wizard-core.ps1`
+**Severidad**: MEDIUM
+
+El shell wizard (`wizard-core.sh`) genera `opencode.json` reemplazando placeholders. El PS wizard solo copia templates — los usuarios de Windows obtienen placeholders literales `{{ENGRAM_PATH}}`, `{{GIT_COMMIT_LEVEL}}`, etc.
+
+**Fix**: Implementar generación de `opencode.json` en `wizard-core.ps1`.
+
+---
+
+### M8. Temp file leak en generación fallida de `opencode.json`
+
+**Archivo**: `modules/wizard-core.sh` línea 914
+**Severidad**: MEDIUM
+
+`/tmp/opencode-$$.json` se crea para la generación de config. Solo se limpia en éxito (vía `mv`). Si falla, queda en `/tmp`.
+
+**Fix**: Agregar `trap` o cleanup explícito en el path de error.
+
+---
+
+## 🟢 LOW — Estilo, mínimos
+
+### L1. `LockFile()` está en `state.go` en vez de `lock.go`
+
+**Archivo**: `cmd/lara-installer/state.go:80`
 **Severidad**: LOW
 
-Verifica `git`, `gh`, state file, lock file — pero no verifica su propia
-integridad (checksum del binario, versión embebida, permisos de ejecución).
+La función está en `state.go` (líneas 83-85) en vez de `lock.go`. No afecta funcionalidad.
 
 ---
 
-### 15. Sin flag `--help`
+### L2. Standalone mode: steps `setup_engram` y `setup_opencode` son no-ops
 
-**Archivo**: `cmd/lara-installer/main.go`
+**Archivo**: `cmd/lara-installer/install.go` líneas 346-350
 **Severidad**: LOW
 
-`lara-installer --help` cae al default con "Unknown command". Típicamente
-`--help` y `-h` deberían mostrar el usage.
+En standalone mode (sin `wizard-core.sh`), estos steps imprimen un mensaje de instalación manual pero retornan `nil` (success). El instalador "completa exitosamente" sin instalar nada.
+
+**Fix**: Retornar error explicativo en vez de success silencioso.
+
+---
+
+### L3. `tareas-pendientes.md` item 8 marcado ✅ pero steps siguen divergentes
+
+**Severidad**: LOW — tracking accuracy
+
+El item 8 (step names) se marcó como ✅ porque el Go binary empezó a usar `run_go_step()`, pero los nombres siguen siendo incompatibles con el shell wizard. El state.json no es portable.
+
+---
+
+### L4. `tareas-pendientes.md` item 10 marcado ✅ pero `runDoctorChecks` está duplicado
+
+**Severidad**: LOW — tracking accuracy
+
+El fix de `runDoctorChecks` introdujo una función duplicada en el test file, rompiendo la compilación.
 
 ---
 
@@ -260,31 +309,31 @@ integridad (checksum del binario, versión embebida, permisos de ejecución).
 
 ```mermaid
 graph TD
-    A[go 1.26 → go 1.22] --> B[Shell injection fix]
-    B --> C[Go binary functional]
-    C --> D[bootstrap.sh --non-interactive]
-    D --> E[bootstrap.ps1 binary download]
-    E --> F[grep/sed → python3/jq]
-    F --> G[Alinear step names]
-    G --> H[GitHub Actions workflow]
-    H --> I[Low priority fixes]
+    C1[runDoctorChecks duplicada] --> C2[Funciones faltantes]
+    C2 --> C3[JSON_DATA no seteado]
+    C3 --> C4[Variables GRAY/PKG_MANAGER]
+    C4 --> C5[bash hardcodeado Windows]
+    C5 --> H1[Alinear step names]
+    H1 --> H2[--check/--dry-run dead code]
+    H2 --> H3[shell injection surface]
+    H3 --> M1-M8[Medium fixes]
+    M1-M8 --> L1-L4[Low fixes]
 ```
 
-Orden de implementación sugerido:
-
-| # | Tarea | Archivo | Esfuerzo | Estado |
-|---|-------|---------|----------|--------|
-| 1 | `go 1.26` → `go 1.22` | `go.mod` | 1 min | ✅ |
-| 2 | Shell injection en wizard_step_state | `wizard-core.sh` | 15 min | ✅ |
-| 3 | grep/sed → python3/jq en wizard_step_is_done | `wizard-core.sh` | 10 min | ✅ |
-| 4 | started_at no sobrescribir | `wizard-core.sh` | 5 min | 🔲 ya cubierto por python3 path |
-| 5 | `--non-interactive` en bootstrap.sh | `bootstrap.sh` + `wizard-core.sh` | 20 min | ✅ |
-| 6 | bootstrap.ps1 flags + --non-interactive | `bootstrap.ps1` | 30 min | ✅ (binary download ya existía) |
-| 7 | Go binary funcional (shell out) | `install.go` + `wizard-core.sh` | 45 min | ✅ |
-| 8 | Test `runDoctorChecks` inexistente | `doctor_test.go` | 5 min | ✅ |
-| 9 | GitHub Actions workflow | `.github/workflows/release-installer.yml` | 30 min | ✅ |
-| 10 | `--help` flag | `main.go` | 5 min | ✅ |
-| 11 | Doctor self-check | `doctor.go` | 10 min | ✅ |
-| 12 | Full undo | `install.go` | 20 min | ⏳ |
-| 13 | LockFile() mover a lock.go | refactor | 5 min | ❌ estilo menor |
-| 14 | BOM UTF-8 en bootstrap.ps1 | `bootstrap.ps1` | 2 min | ✅ |
+| # | Issue | Archivo | Esfuerzo | Prioridad | Estado |
+|---|-------|---------|----------|-----------|--------|
+| 1 | `runDoctorChecks` duplicada | `doctor_test.go` | 2 min | 🔴 C1 | ✅ |
+| 2 | Funciones faltantes + step alignment | `wizard-core.sh` | 30 min | 🔴 C2/H1 | ✅ |
+| 3 | JSON_DATA no seteado en run_go_step | `wizard-core.sh` | 5 min | 🔴 C3 | ✅ |
+| 4 | Variables GRAY + PKG_MANAGER | `wizard-core.sh` | 5 min | 🔴 C4 | ✅ |
+| 5 | Cross-platform exec + shell injection | `install.go` | 20 min | 🔴 C5/H3 | ✅ |
+| 6 | wizard_check_only + wizard_dry_run | `wizard-core.sh` | 15 min | 🟡 H2 | ✅ |
+| 7 | Backup step en shell wizard | `wizard-core.sh` | 15 min | 🟡 M1 | ⏳ |
+| 8 | Arch detection en bootstrap.ps1 | `bootstrap.ps1` | 5 min | 🟡 M2 | ✅ |
+| 9 | CI go.sum reference | `release-installer.yml` | 2 min | 🟡 M3 | ✅ |
+| 10 | Documentación faltante design.md | `design.md` | 10 min | 🟡 M4-M5 | ✅ |
+| 11 | Fresh-state JSON interpolation | `wizard-core.sh` | 5 min | 🟡 M6 | ✅ |
+| 12 | PS wizard generate opencode.json | `wizard-core.ps1` | 20 min | 🟡 M7 | ⏳ |
+| 13 | Temp file leak | `wizard-core.sh` | 5 min | 🟡 M8 | ✅ |
+| 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
+| 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |

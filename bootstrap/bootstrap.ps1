@@ -16,6 +16,10 @@ $script:Version = "0.1.0"
 $script:BinDir = Join-Path $env:LOCALAPPDATA "LaraDiaries\bin"
 
 function Get-BinaryName {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($arch -eq 'ARM64') {
+        return "lara-installer-windows-arm64.exe"
+    }
     return "lara-installer-windows-amd64.exe"
 }
 
