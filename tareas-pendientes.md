@@ -5,9 +5,9 @@
 
 ## Resumen Ejecutivo
 
-**21 issues encontrados**: 5 🔴 CRITICAL · 3 🔴 HIGH · 8 🟡 MEDIUM · 5 🟢 LOW
+**22 issues encontrados**: 5 🔴 CRITICAL · 4 🔴 HIGH · 9 🟡 MEDIUM · 4 🟢 LOW
 
-Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos.
+Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos, incluyendo 2 identificados en revisión posterior (H4, M9).
 
 ---
 
@@ -157,6 +157,29 @@ Si `wizardPath` contiene una comilla simple (e.g., `/home/user/lara's/...`), hay
 
 ---
 
+### H4. Sin rollback global — pasos completados no se deshacen si falla otro
+
+**Archivos**: `cmd/lara-installer/install.go`, `modules/wizard-core.sh`
+**Severidad**: HIGH — instalación parcial deja sistema sucio sin undo
+
+Cada paso tiene rollback individual (ej: `rollback_remove_dir`, `rollbackShell`).
+Pero si el paso 3 falla, los pasos 1-2 siguen marcados como `success` en
+`state.json` y sus cambios **no se revierten**. No hay un "undo completo" que
+vuelva al estado pre-instalación.
+
+```go
+// install.go: cada step tiene su propio rollback, pero si falla el 3,
+// los steps 1-2 ya se marcaron como success y no se tocan
+```
+
+**Fix**: Implementar `undo_all()` que:
+1. Lea `state.json` y recorra steps en orden inverso
+2. Ejecute el rollback de cada step completado
+3. Elimine `state.json` al final (o marque como `rolled_back`)
+4. Informe al usuario qué se deshizo y qué no
+
+---
+
 ## 🟡 MEDIUM — Inconsistencias, paridad incompleta
 
 ### M1. No hay backup step en shell wizard (PowerShell sí tiene)
@@ -267,6 +290,35 @@ El shell wizard (`wizard-core.sh`) genera `opencode.json` reemplazando placehold
 
 ---
 
+### M9. `doctorSelfCheck` incompleto — falta checksum e integridad de archivos
+
+**Archivo**: `cmd/lara-installer/doctor.go:188`
+**Severidad**: MEDIUM
+
+`doctorSelfCheck()` existe y verifica:
+- Path del ejecutable (`os.Executable()`)
+- Tamaño del binario (no vacío)
+- Versión embebida
+
+Pero **no verifica**:
+- Checksum SHA256 del binario (para detectar corrupción)
+- Integridad de los archivos que instaló (están todos? están completos?)
+- Que los checksums de los assets instalados coincidan con lo esperado
+
+```go
+func doctorSelfCheck() doctorCheck {
+    // Verifica size > 0, pero no checksum
+    // No verifica archivos instalados
+}
+```
+
+**Fix**: Agregar al doctor:
+1. Calcular SHA256 del binario y compararlo con un checksum embebido en el build
+2. Verificar que existan los archivos clave que el installer debió dejar (opencode.json, agent prompts, etc.)
+3. Opcional: checksum de esos archivos
+
+---
+
 ## 🟢 LOW — Estilo, mínimos
 
 ### L1. `LockFile()` está en `state.go` en vez de `lock.go`
@@ -316,8 +368,9 @@ graph TD
     C5 --> H1[Alinear step names]
     H1 --> H2[--check/--dry-run dead code]
     H2 --> H3[shell injection surface]
-    H3 --> M1-M8[Medium fixes]
-    M1-M8 --> L1-L4[Low fixes]
+    H3 --> H4[Sin rollback global]
+    H4 --> M1-M9[Medium fixes]
+    M1-M9 --> L1-L4[Low fixes]
 ```
 
 | # | Issue | Archivo | Esfuerzo | Prioridad | Estado |
@@ -337,6 +390,8 @@ graph TD
 | 13 | Temp file leak | `wizard-core.sh` | 5 min | 🟡 M8 | ✅ |
 | 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
+| 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | 📝 |
+| 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | 📝 |
 
 ---
 
