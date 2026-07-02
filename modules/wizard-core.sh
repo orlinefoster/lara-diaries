@@ -877,7 +877,7 @@ with open('$opencode_output', 'w') as f:
             "$templates_dir/configs/opencode.json" > "$opencode_output" 2>/dev/null && opencode_generated=true
     fi
 
-    if [[ "$opcode_generated" == "true" ]]; then
+    if [[ "$opencode_generated" == "true" ]]; then
         mkdir -p "$OPENCODE_CONFIG_DIR"
         mv "$opencode_output" "$OPENCODE_CONFIG_DIR/opencode.json"
         log_info "Generated: opencode.json"

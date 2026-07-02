@@ -174,11 +174,15 @@ func TestCheckLockFile_Active(t *testing.T) {
 }
 
 func TestCheckPrereq_Found(t *testing.T) {
-	// go should always be in PATH during tests
-	c := checkPrereq("go")
+	// Use a command guaranteed available on each platform
+	cmd := "sh"
+	if runtime.GOOS == "windows" {
+		cmd = "cmd"
+	}
+	c := checkPrereq(cmd)
 
 	if c.Status != "OK" {
-		t.Errorf("checkPrereq('go') status = %q, want OK", c.Status)
+		t.Errorf("checkPrereq(%q) status = %q, want OK", cmd, c.Status)
 	}
 	if !strings.Contains(c.Detail, "Found at") {
 		t.Errorf("checkPrereq detail %q should mention 'Found at'", c.Detail)

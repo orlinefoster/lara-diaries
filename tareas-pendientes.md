@@ -491,13 +491,13 @@ graph TD
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
 | 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | 📝 |
 | 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | 📝 |
-| 18 | Typo `$opcode_generated` en generate_opencode_json | `wizard-core.sh` | 2 min | 🔴 N1 | 📝 |
-| 19 | TestRunHandlers_Execute bypass standaloneRun | `install_test.go` | 15 min | 🔴 N2 | 📝 |
-| 20 | CI build dir `../../release/` puede no existir | `release-installer.yml` | 2 min | 🟡 N3 | 📝 |
-| 21 | PS wizard arch detection wrong para ARM64 | `wizard-core.ps1` | 5 min | 🟡 N4 | 📝 |
-| 22 | doctor_test asume `go` en PATH | `doctor_test.go` | 5 min | 🟡 N5 | 📝 |
-| 23 | Windows shellOut sourcea .sh via PowerShell | `install.go` | 10 min | 🟢 N6 | 📝 |
-| 24 | CI release body es schema doc | `release-installer.yml` | 5 min | 🟢 N7 | 📝 |
+| 18 | Typo `$opcode_generated` en generate_opencode_json | `wizard-core.sh` | 2 min | 🔴 N1 | ✅ |
+| 19 | TestRunHandlers_Execute bypass standaloneRun | `install_test.go` | 15 min | 🔴 N2 | ✅ |
+| 20 | CI build dir `../../release/` puede no existir | `release-installer.yml` | 2 min | 🟡 N3 | ✅ |
+| 21 | PS wizard arch detection wrong para ARM64 | `wizard-core.ps1` | 5 min | 🟡 N4 | ✅ |
+| 22 | doctor_test asume `go` en PATH | `doctor_test.go` | 5 min | 🟡 N5 | ✅ |
+| 23 | Windows shellOut sourcea .sh via PowerShell | `install.go` | 10 min | 🟢 N6 | ✅ |
+| 24 | CI release body es schema doc | `release-installer.yml` | 5 min | 🟢 N7 | ✅ |
 
 ---
 

@@ -68,6 +68,7 @@ jobs:
         run: |
           cd cmd/lara-installer
           BINARY_NAME="lara-installer-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          mkdir -p ../../release
           go build -ldflags="-s -w" -o "../../release/$BINARY_NAME" .
 
       - name: Generate SHA256
@@ -105,8 +106,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "lara-installer ${{ github.ref_name }}"
-          body_path: docs/installer-state-schema.md
           files: release/*
           draft: true
           prerelease: false
-          generate_release_notes: false
+          generate_release_notes: true

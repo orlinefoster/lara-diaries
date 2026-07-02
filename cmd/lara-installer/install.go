@@ -49,20 +49,11 @@ func wizardCorePath() (string, error) {
 func shellOut(wizardPath, stepName, jsonConfig string) error {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// On Windows, locate PowerShell or cmd for the shell bridge.
-		// wizard-core.sh can't run directly — inform user and link to PowerShell wizard.
-		pwsh, err := exec.LookPath("pwsh")
-		if err != nil {
-			pwsh, err = exec.LookPath("powershell")
-		}
-		if err == nil {
-			cmd = exec.Command(pwsh, "-NoProfile", "-Command",
-				"& '"+wizardPath+"'; Start-Wizard")
-		} else {
-			fmt.Fprintln(os.Stderr, "  [!] On Windows, please use bootstrap.ps1 instead of lara-installer.")
-			fmt.Fprintln(os.Stderr, "  [!] The lara-installer binary requires wizard-core.sh (Unix).")
-			return fmt.Errorf("wizard-core.sh bridge not available on Windows without WSL")
-		}
+		// On Windows, the Go binary can't source wizard-core.sh (Bash).
+		// The proper entry point is bootstrap.ps1.
+		fmt.Fprintln(os.Stderr, "  [!] On Windows, please use bootstrap.ps1 instead of lara-installer.")
+		fmt.Fprintln(os.Stderr, "  [!] The lara-installer binary requires wizard-core.sh (Unix).")
+		return fmt.Errorf("wizard-core.sh bridge not available on Windows without WSL")
 	} else {
 		// Unix: pass path as $1 to bash -s to avoid injection in -c string
 		cmd = exec.Command("bash", "-s", "--", wizardPath)

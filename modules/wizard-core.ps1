@@ -733,7 +733,7 @@ function Install-Components {
                 $version = $tag.TrimStart('v')
 
                 # Detect architecture
-                $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "arm64" }
+                $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { "arm64" } else { "amd64" }
                 $archiveName = "engram_${version}_windows_${arch}.zip"
 
                 $dlUrl = "https://github.com/Gentleman-Programming/engram/releases/download/${tag}/${archiveName}"

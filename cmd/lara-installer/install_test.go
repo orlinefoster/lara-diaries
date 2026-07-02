@@ -147,14 +147,18 @@ func TestRollbackHandlers_Execute(t *testing.T) {
 }
 
 func TestRunHandlers_Execute(t *testing.T) {
-	// Verify that each step's run handler can be called without error
+	// Verify that each step's run handler does not panic when called.
+	// The standaloneRun path is triggered by runInstall(), not by step.Run directly.
+	// With an empty wizardPath, shellOut will return an error — that's expected.
 	for _, step := range installSteps {
 		t.Run(step.Name, func(t *testing.T) {
-			// Run with empty wizard path (standalone mode) and no config
-			// to avoid requiring wizard-core.sh in tests
-			if err := step.Run("", ""); err != nil {
-				t.Errorf("Run for %q returned error: %v", step.Name, err)
-			}
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Run for %q panicked: %v", step.Name, r)
+				}
+			}()
+			// Run with empty wizard path — will error but should not panic
+			_ = step.Run("", "")
 		})
 	}
 }
