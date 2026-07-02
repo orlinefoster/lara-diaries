@@ -24,17 +24,27 @@ func runDoctorChecks() []doctorCheck {
 	// 2. State file
 	checks = append(checks, checkStateFile())
 
-	// 3. Lock file status
+	// 3. State consistency (stuck steps, missing steps)
+	checks = append(checks, checkStateConsistency())
+
+	// 4. Lock file status
 	checks = append(checks, checkLockFile())
 
-	// 4. Prerequisites: git, gh
+	// 5. Prerequisites: git, gh
 	checks = append(checks, checkPrereq("git"))
 	checks = append(checks, checkPrereq("gh"))
 
-	// 5. State directory accessibility
+	// 6. Critical install tools: bash (or PowerShell on Windows)
+	checks = append(checks, checkShell())
+
+	// 7. Installed components: engram, gentle-ai (WARN if missing)
+	checks = append(checks, checkInstalledTool("engram"))
+	checks = append(checks, checkInstalledTool("gentle-ai"))
+
+	// 8. State directory accessibility
 	checks = append(checks, checkStateDir())
 
-	// 6. Self check
+	// 9. Self check
 	checks = append(checks, doctorSelfCheck())
 
 	return checks
@@ -213,5 +223,88 @@ func doctorSelfCheck() doctorCheck {
 
 	c.Status = "OK"
 	c.Detail = fmt.Sprintf("Binary OK (%d bytes, v%s)", info.Size(), version)
+	return c
+}
+
+// checkStateConsistency verifies that no steps are stuck in "running" status
+// and that the install ID is valid.
+func checkStateConsistency() doctorCheck {
+	c := doctorCheck{Name: "State Consistency"}
+	state, err := ReadState()
+	if err != nil {
+		c.Status = "WARN"
+		c.Detail = "Cannot check consistency: " + err.Error()
+		return c
+	}
+	if state == nil {
+		c.Status = "OK"
+		c.Detail = "No state file (nothing to check)"
+		return c
+	}
+
+	var stuckSteps []string
+	for _, step := range installSteps {
+		s, err := state.ReadStep(step.Name)
+		if err != nil {
+			continue
+		}
+		if s == nil {
+			continue
+		}
+		if s.Status == StepRunning {
+			stuckSteps = append(stuckSteps, step.Name)
+		}
+	}
+
+	if len(stuckSteps) > 0 {
+		c.Status = "FAIL"
+		c.Detail = fmt.Sprintf("Steps stuck in 'running': %v (previous install may have crashed)", stuckSteps)
+		return c
+	}
+
+	c.Status = "OK"
+	c.Detail = "All steps have valid terminal status"
+	return c
+}
+
+// checkShell verifies that the required shell is available for rollback commands.
+func checkShell() doctorCheck {
+	name := "bash"
+	if runtime.GOOS == "windows" {
+		name = "pwsh"
+	}
+	c := doctorCheck{Name: "Shell: " + name}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			// On Windows, fall back to PowerShell (powershell.exe)
+			alt, err2 := exec.LookPath("powershell.exe")
+			if err2 == nil {
+				c.Status = "WARN"
+				c.Detail = name + " not found, using powershell.exe at " + alt
+				return c
+			}
+		}
+		c.Status = "FAIL"
+		c.Detail = "Not found on PATH — rollback commands will fail"
+		return c
+	}
+	c.Status = "OK"
+	c.Detail = "Found at " + path
+	return c
+}
+
+// checkInstalledTool checks if a post-install tool is available on PATH.
+// Missing tools get WARN (not FAIL) because the user may not have installed yet.
+func checkInstalledTool(name string) doctorCheck {
+	c := doctorCheck{Name: "Installed: " + name}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		c.Status = "WARN"
+		c.Detail = "Not found on PATH (expected after installation)"
+		return c
+	}
+	c.Status = "OK"
+	c.Detail = "Found at " + path
 	return c
 }

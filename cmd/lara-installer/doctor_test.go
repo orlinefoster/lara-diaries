@@ -199,9 +199,98 @@ func TestCheckPrereq_NotFound(t *testing.T) {
 
 func TestDoctorCheckCount(t *testing.T) {
 	checks := runDoctorChecks()
-	// The real runDoctorChecks includes 7 checks: OS, StateFile, LockFile, git, gh, StateDir, SelfCheck
-	// We expect 7 (Live) or at least 6 (no self-check in some contexts)
-	if len(checks) < 6 {
-		t.Errorf("got %d checks, want at least 6", len(checks))
+	// runDoctorChecks now includes 11 checks:
+	// OS, StateFile, StateConsistency, LockFile, git, gh, Shell, engram, gentle-ai, StateDir, SelfCheck
+	if len(checks) < 10 {
+		t.Errorf("got %d checks, want at least 10", len(checks))
+	}
+}
+
+func TestCheckShell_BashFound(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash not typically on PATH on Windows")
+	}
+	c := checkShell()
+	if c.Status != "OK" {
+		t.Errorf("checkShell status = %q, want OK", c.Status)
+	}
+	if !strings.Contains(c.Detail, "Found at") {
+		t.Errorf("checkShell detail %q should mention 'Found at'", c.Detail)
+	}
+}
+
+func TestCheckShell_WindowsFallback(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-specific test")
+	}
+	c := checkShell()
+	// On Windows, should find pwsh or powershell.exe
+	if c.Status != "OK" && c.Status != "WARN" {
+		t.Errorf("checkShell status = %q, want OK or WARN on Windows", c.Status)
+	}
+}
+
+func TestCheckStateConsistency_NoState(t *testing.T) {
+	teardown := setupTestEnv(t)
+	defer teardown()
+
+	c := checkStateConsistency()
+	if c.Status != "OK" {
+		t.Errorf("checkStateConsistency with no state = %q, want OK", c.Status)
+	}
+}
+
+func TestCheckStateConsistency_AllSuccess(t *testing.T) {
+	teardown := setupTestEnv(t)
+	defer teardown()
+
+	state := NewInitialState("fresh")
+	for _, s := range installSteps {
+		_ = state.UpdateStep(s.Name, func(st *Step) { st.Status = StepSuccess })
+	}
+	if err := WriteState(state); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+
+	c := checkStateConsistency()
+	if c.Status != "OK" {
+		t.Errorf("checkStateConsistency with all success = %q, want OK", c.Status)
+	}
+}
+
+func TestCheckStateConsistency_StuckRunning(t *testing.T) {
+	teardown := setupTestEnv(t)
+	defer teardown()
+
+	state := NewInitialState("fresh")
+	_ = state.UpdateStep("github_login", func(s *Step) { s.Status = StepSuccess })
+	_ = state.UpdateStep("clone_gentle_ai", func(s *Step) { s.Status = StepRunning })
+	_ = state.UpdateStep("setup_engram", func(s *Step) { s.Status = StepPending })
+	if err := WriteState(state); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+
+	c := checkStateConsistency()
+	if c.Status != "FAIL" {
+		t.Errorf("checkStateConsistency with stuck running = %q, want FAIL", c.Status)
+	}
+}
+
+func TestCheckInstalledTool_Found(t *testing.T) {
+	// sh/cmd should always be on PATH
+	cmd := "sh"
+	if runtime.GOOS == "windows" {
+		cmd = "cmd"
+	}
+	c := checkInstalledTool(cmd)
+	if c.Status != "OK" {
+		t.Errorf("checkInstalledTool(%q) = %q, want OK", cmd, c.Status)
+	}
+}
+
+func TestCheckInstalledTool_NotFound(t *testing.T) {
+	c := checkInstalledTool("this-tool-definitely-does-not-exist-99999")
+	if c.Status != "WARN" {
+		t.Errorf("checkInstalledTool(notfound) = %q, want WARN", c.Status)
 	}
 }
