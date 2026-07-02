@@ -294,9 +294,16 @@ El python3 path (líneas 446-484) usa env vars correctamente. Pero el fresh-stat
 **Archivo**: `modules/wizard-core.ps1`
 **Severidad**: MEDIUM
 
-El shell wizard (`wizard-core.sh`) genera `opencode.json` reemplazando placeholders. El PS wizard solo copia templates — los usuarios de Windows obtienen placeholders literales `{{ENGRAM_PATH}}`, `{{GIT_COMMIT_LEVEL}}`, etc.
+El shell wizard (`wizard-core.sh`) generaba `opencode.json` reemplazando placeholders. El PS wizard solo copiaba templates — los usuarios de Windows obtenían placeholders literales `{{ENGRAM_PATH}}`, `{{GIT_COMMIT_LEVEL}}`, etc.
 
-**Fix**: Implementar generación de `opencode.json` en `wizard-core.ps1`.
+**Fix (06/2026)**: Agregada `Generate-OpencodeJson` en `wizard-core.ps1` usando JSON nativo de PowerShell (sin python3 ni jq):
+1. Lee `templates/configs/opencode.json`
+2. Setea `mcp.engram.command[0]` con el path de engram
+3. Mapea preferencia de repo management a niveles de permiso git
+4. Incrusta prompts de lara-plan.md / lara-vip.md
+5. Elimina `gentle-orchestrator`
+6. Escribe a `%APPDATA%\opencode\opencode.json`
+- Hookeado en `Install-Components` después de templates y GitHub repos
 
 ---
 
@@ -519,7 +526,7 @@ graph TD
 | 9 | CI go.sum reference | `release-installer.yml` | 2 min | 🟡 M3 | ✅ |
 | 10 | Documentación faltante design.md | `design.md` | 10 min | 🟡 M4-M5 | ✅ |
 | 11 | Fresh-state JSON interpolation | `wizard-core.sh` | 5 min | 🟡 M6 | ✅ |
-| 12 | PS wizard generate opencode.json | `wizard-core.ps1` | 20 min | 🟡 M7 | ⏳ |
+| 12 | PS wizard generate opencode.json | `wizard-core.ps1` | 20 min | 🟡 M7 | ✅ |
 | 13 | Temp file leak | `wizard-core.sh` | 5 min | 🟡 M8 | ✅ |
 | 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
