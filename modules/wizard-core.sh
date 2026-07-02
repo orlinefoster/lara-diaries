@@ -1149,6 +1149,88 @@ setup_github_repos() {
 }
 
 # =============================================================================
+# backup_config — pre-install backup of existing opencode config to backups/
+# =============================================================================
+backup_config() {
+    if [[ ! -d "$OPENCODE_CONFIG_DIR" ]]; then
+        log_info "No existing opencode config found — fresh install."
+        return 0
+    fi
+
+    echo ""
+    log_warn "Found existing opencode configuration in: $OPENCODE_CONFIG_DIR"
+    echo ""
+    read -r -p "  ¿Querés respaldarla antes de continuar? (S/N, predeterminado: S): " backup_choice
+    backup_choice="${backup_choice:-S}"
+    if [[ "$backup_choice" != "S" && "$backup_choice" != "s" ]]; then
+        log_info "Backup omitido — instalando sobre config existente."
+        return 0
+    fi
+
+    echo "  ¿Qué tipo de backup?"
+    echo "    1) Completo (config, plugins, commands, skills metadata)"
+    echo "    2) Solo agentes"
+    read -r -p "  Opción (1-2, predeterminado: 1): " backup_mode
+    backup_mode="${backup_mode:-1}"
+
+    local backups_dir
+    backups_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../backups" && pwd 2>/dev/null || echo "$HOME/lara-diaries/backups")"
+    mkdir -p "$backups_dir"
+
+    local timestamp
+    timestamp="$(date '+%Y%m%d-%H%M%S')"
+    local backup_path="$backups_dir/opencode-config-$timestamp"
+
+    mkdir -p "$backup_path"
+    log_info "Respaldando config en: $backup_path"
+
+    # Always backup main config
+    if [[ -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
+        cp "$OPENCODE_CONFIG_DIR/opencode.json" "$backup_path/"
+        log_info "  ✓ opencode.json respaldado"
+    fi
+
+    # Always backup AGENTS.md
+    if [[ -f "$OPENCODE_CONFIG_DIR/AGENTS.md" ]]; then
+        cp "$OPENCODE_CONFIG_DIR/AGENTS.md" "$backup_path/"
+        log_info "  ✓ AGENTS.md respaldado"
+    fi
+
+    # Backup agents directory
+    if [[ -d "$OPENCODE_CONFIG_DIR/agents" ]]; then
+        cp -r "$OPENCODE_CONFIG_DIR/agents" "$backup_path/"
+        log_info "  ✓ agents/ respaldados"
+    fi
+
+    # Full mode: also backup plugins, commands, skills
+    if [[ "$backup_mode" == "1" ]]; then
+        if [[ -d "$OPENCODE_CONFIG_DIR/plugins" ]]; then
+            mkdir -p "$backup_path/plugins"
+            cp "$OPENCODE_CONFIG_DIR/plugins/"*.ts "$backup_path/plugins/" 2>/dev/null || true
+            log_info "  ✓ plugins/ metadata respaldada"
+        fi
+        if [[ -d "$OPENCODE_CONFIG_DIR/commands" ]]; then
+            mkdir -p "$backup_path/commands"
+            cp "$OPENCODE_CONFIG_DIR/commands/"*.md "$backup_path/commands/" 2>/dev/null || true
+            log_info "  ✓ commands/ respaldados"
+        fi
+        if [[ -d "$OPENCODE_CONFIG_DIR/skills" ]]; then
+            mkdir -p "$backup_path/skills"
+            for skill_dir in "$OPENCODE_CONFIG_DIR/skills"/*/; do
+                if [[ -f "$skill_dir/SKILL.md" ]]; then
+                    skill_name="$(basename "$skill_dir")"
+                    mkdir -p "$backup_path/skills/$skill_name"
+                    cp "$skill_dir/SKILL.md" "$backup_path/skills/$skill_name/"
+                fi
+            done
+            log_info "  ✓ skills/ metadata respaldada"
+        fi
+    fi
+
+    log_success "Backup completo en: $backup_path"
+}
+
+# =============================================================================
 # backup_initial_config — back up opencode config to opencode-config repo
 # =============================================================================
 backup_initial_config() {
@@ -1639,6 +1721,7 @@ wizard_main() {
     wizard_run_step "repo_management"    "Repo Management"       repo_management_prompt
     wizard_run_step "design_orientation" "Design & Style"        design_orientation_prompt
     wizard_run_step "mission"            "Mission"               mission_prompt
+    wizard_run_step "backup"             "Backup Config"         backup_config
     wizard_run_step "install_components" "Install Components"    install_components
     wizard_run_step "setup_sync"         "Setup Sync"            setup_sync
     wizard_run_step "save_profile"       "Save Profile"          save_user_profile
