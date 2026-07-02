@@ -1,0 +1,9 @@
+# Binaries
+*.exe
+*.test
+*.out
+
+# Temp files
+*.tmp
+
+lara-installer

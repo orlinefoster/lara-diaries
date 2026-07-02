@@ -133,15 +133,27 @@ lara-diaries/
 ├── design.md                      # This file
 ├── README.md                      # User-facing instructions
 ├── .gitignore
+├── tareas-pendientes.md           # Issue tracker and bug audit log
 │
 ├── bootstrap-agent.md             # Prompt template for the bootstrap agent
 │
 ├── bootstrap/
 │   ├── bootstrap.ps1              # Windows bootstrapper (PowerShell)
-│   └── bootstrap.sh               # Linux bootstrapper (Bash)
+│   ├── bootstrap.sh               # Linux bootstrapper (Bash)
+│   └── bootstrap.Tests.ps1        # Pester tests for bootstrap.ps1
+│
+├── cmd/
+│   └── lara-installer/            # Go binary for portable installer
+│       ├── main.go                # Entry point: install, doctor, --version
+│       ├── install.go             # Step orchestration, shell bridge, standalone mode
+│       ├── doctor.go              # Health checks: OS, state, lock, prereqs, self-check
+│       ├── state.go               # JSON state machine with resume support
+│       ├── lock.go                # PID-based lock with stale detection
+│       ├── *_test.go              # Tests for each component
+│       └── go.mod                 # Go module (go 1.22)
 │
 ├── modules/
-│   ├── wizard-core.ps1            # Shared wizard functions (PS)
+│   ├── wizard-core.ps1            # Shared wizard functions (PowerShell)
 │   └── wizard-core.sh             # Shared wizard functions (Bash)
 │
 ├── templates/
@@ -161,9 +173,12 @@ lara-diaries/
 │   ├── guardian-rules.md          # Safety rules for Lara interceptor
 │   └── patterns.json              # Dangerous patterns to watch for
 │
-└── docs/                          # Optional: extended docs
-    ├── ARCHITECTURE_DECISIONS.md  # Trade-offs and rationale
-    └── TROUBLESHOOTING.md         # Common issues
+├── docs/
+│   └── installer-state-schema.md  # JSON state machine schema documentation
+│
+└── .github/
+    └── workflows/
+        └── release-installer.yml  # CI/CD: build + release for 5 platforms
 ```
 
 ---

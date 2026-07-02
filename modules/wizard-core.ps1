@@ -14,6 +14,86 @@ function Write-Info     { Write-Host "-> $($args[0])" -ForegroundColor Cyan }
 function Write-ErrorMsg { Write-Host "x $($args[0])" -ForegroundColor Red }
 function Write-Step     { Write-Host "`n  == $($args[0])" -ForegroundColor Magenta }
 
+# ── STEP STATE ────────────────────────────────
+function Write-StepState {
+    param(
+        [string]$StepName,
+        [string]$Status,
+        [string]$ErrorMsg = $null,
+        [string]$Rollback = $null
+    )
+    # Use bootstrap.ps1's Update-StepState if available, otherwise work standalone
+    if (Get-Command "Update-StepState" -ErrorAction SilentlyContinue) {
+        Update-StepState -StepName $StepName -Status $Status -ErrorMsg $ErrorMsg -Rollback $Rollback
+        return
+    }
+    # Standalone fallback
+    $stateDir = Join-Path $env:LOCALAPPDATA "LaraDiaries"
+    $stateFile = Join-Path $stateDir "state.json"
+    if (-not (Test-Path -LiteralPath $stateDir)) {
+        $null = New-Item -ItemType Directory -Path $stateDir -Force -ErrorAction SilentlyContinue
+    }
+    $state = $null
+    if (Test-Path -LiteralPath $stateFile) {
+        try {
+            $state = Get-Content -Path $stateFile -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            Write-Warn "[!] state.json corrupto en wizard-core -- regenerando."
+            Remove-Item -Path $stateFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $state) {
+        $state = [PSCustomObject]@{
+            version      = 1
+            install_id   = [guid]::NewGuid().ToString()
+            created_at   = (Get-Date).ToString("o")
+            updated_at   = (Get-Date).ToString("o")
+            install_type = "unknown"
+            steps        = [PSCustomObject]@{}
+        }
+    }
+    $now = (Get-Date).ToString("o")
+    if (-not $state.steps.$StepName) {
+        $state.steps | Add-Member -NotePropertyName $StepName -NotePropertyValue ([PSCustomObject]@{
+            status       = "pending"
+            started_at   = $now
+            completed_at = $null
+            error        = $null
+            rollback     = $null
+        }) -Force
+    }
+    $state.steps.$StepName.status = $Status
+    $state.updated_at = $now
+    if ($Status -in @("success","failed","skipped")) {
+        $state.steps.$StepName.completed_at = $now
+    }
+    if ($ErrorMsg) { $state.steps.$StepName.error = $ErrorMsg }
+    if ($Rollback) { $state.steps.$StepName.rollback = $Rollback }
+    try {
+        $json = $state | ConvertTo-Json -Compress
+        $json | Set-Content -Path $stateFile -Encoding UTF8 -Force
+    } catch {
+        Write-Warn "[!] No se pudo escribir state.json desde wizard-core: $_"
+    }
+}
+
+# ── ROLLBACK HELPERS ──────────────────────────
+function Rollback-GitClone {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        Write-Warn "  Rollback: eliminando $Path"
+        Remove-Item -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Rollback-ConfigChange {
+    param([string]$BackupPath, [string]$OriginalPath)
+    if (Test-Path -LiteralPath $BackupPath) {
+        Write-Warn "  Rollback: restaurando $OriginalPath desde backup"
+        Copy-Item -Path $BackupPath -Destination $OriginalPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ── PROGRESS ──────────────────────────────────
 $script:ProgressSteps = @(
     "Login de GitHub",
@@ -511,7 +591,8 @@ function Install-Component {
         [string]$Name,
         [scriptblock]$CheckBlock,
         [scriptblock]$InstallBlock,
-        [switch]$Optional
+        [switch]$Optional,
+        [scriptblock]$RollbackBlock = $null
     )
 
     $alreadyInstalled = & $CheckBlock
@@ -536,6 +617,14 @@ function Install-Component {
     } catch {
         Write-Status -Component $Name -Status "ERROR"
         Write-Warn "  $($_.Exception.Message)"
+        if ($RollbackBlock) {
+            Write-Warn "  Ejecutando rollback para $Name..."
+            try {
+                & $RollbackBlock
+            } catch {
+                Write-Warn "  Rollback fallo: $_"
+            }
+        }
         return $false
     }
 }
@@ -644,7 +733,7 @@ function Install-Components {
                 $version = $tag.TrimStart('v')
 
                 # Detect architecture
-                $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "arm64" }
+                $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { "arm64" } else { "amd64" }
                 $archiveName = "engram_${version}_windows_${arch}.zip"
 
                 $dlUrl = "https://github.com/Gentleman-Programming/engram/releases/download/${tag}/${archiveName}"
@@ -1083,6 +1172,7 @@ function Start-NonInteractiveWizard {
 
 # ── MAIN WIZARD ORCHESTRATOR ──────────────────
 function Start-Wizard {
+    param([string[]]$CompletedSteps = @())
     Write-Host "`n"
     Write-Host "+---------------------------------------------+" -ForegroundColor Magenta
     if ($script:IsDryRun) {
@@ -1098,39 +1188,66 @@ function Start-Wizard {
         Write-Host "  Los valores predeterminados estan entre parentesis.`n" -ForegroundColor Gray
     }
 
+    function Step-Skipped { param([string]$Name) return $Name -in $CompletedSteps }
+    function Run-Step {
+        param([string]$Name, [scriptblock]$Action)
+        if (Step-Skipped -Name $Name) {
+            Write-Host "  [SKIP] $Name ya completado." -ForegroundColor DarkYellow
+            return
+        }
+        $script:CurrentStep = $Name
+        Write-StepState -StepName $Name -Status "running"
+        & $Action
+        Write-StepState -StepName $Name -Status "success"
+    }
+
     try {
-        Set-Progress -Step 0 -Status "Login GitHub..."
-        Invoke-GitHubLogin
+        $script:CurrentStep = $null
 
-        Set-Progress -Step 1 -Status "Directorio..."
-        Invoke-DevDirectoryPrompt
-
-        Set-Progress -Step 2 -Status "Gentle AI..."
-        Invoke-GentleAIPrompt
-
-        Set-Progress -Step 3 -Status "Preferencias..."
-        Invoke-RecognitionQuestions
-
-        Set-Progress -Step 4 -Status "Repos..."
-        Invoke-RepoManagementPrompt
-
-        Set-Progress -Step 5 -Status "Disenio..."
-        Invoke-DesignOrientationPrompt
-
-        Set-Progress -Step 6 -Status "Mision..."
-        Invoke-MissionPrompt
-
-        Set-Progress -Step 7 -Status "Backup..."
-        Invoke-BackupPrompt
-
-        Set-Progress -Step 8 -Status "Instalando..."
-        Install-Components
-
-        Set-Progress -Step 9 -Status "Sincronizacion..."
-        Setup-Sync
-
-        Set-Progress -Step 10 -Status "Resumen..."
-        Show-Summary
+        Run-Step -Name "github_login" -Action {
+            Set-Progress -Step 0 -Status "Login GitHub..."
+            Invoke-GitHubLogin
+        }
+        Run-Step -Name "dev_directory" -Action {
+            Set-Progress -Step 1 -Status "Directorio..."
+            Invoke-DevDirectoryPrompt
+        }
+        Run-Step -Name "gentle_ai_prompt" -Action {
+            Set-Progress -Step 2 -Status "Gentle AI..."
+            Invoke-GentleAIPrompt
+        }
+        Run-Step -Name "recognition_questions" -Action {
+            Set-Progress -Step 3 -Status "Preferencias..."
+            Invoke-RecognitionQuestions
+        }
+        Run-Step -Name "repo_management" -Action {
+            Set-Progress -Step 4 -Status "Repos..."
+            Invoke-RepoManagementPrompt
+        }
+        Run-Step -Name "design_orientation" -Action {
+            Set-Progress -Step 5 -Status "Disenio..."
+            Invoke-DesignOrientationPrompt
+        }
+        Run-Step -Name "mission" -Action {
+            Set-Progress -Step 6 -Status "Mision..."
+            Invoke-MissionPrompt
+        }
+        Run-Step -Name "backup" -Action {
+            Set-Progress -Step 7 -Status "Backup..."
+            Invoke-BackupPrompt
+        }
+        Run-Step -Name "install_components" -Action {
+            Set-Progress -Step 8 -Status "Instalando..."
+            Install-Components
+        }
+        Run-Step -Name "setup_sync" -Action {
+            Set-Progress -Step 9 -Status "Sincronizacion..."
+            Setup-Sync
+        }
+        Run-Step -Name "show_summary" -Action {
+            Set-Progress -Step 10 -Status "Resumen..."
+            Show-Summary
+        }
 
         Write-Progress -Activity "Lara Diaries" -Completed
         if ($script:IsDryRun) {
@@ -1141,6 +1258,9 @@ function Start-Wizard {
         Write-Host ""
     } catch {
         Write-Progress -Activity "Lara Diaries" -Completed
+        if ($script:CurrentStep) {
+            Write-StepState -StepName $script:CurrentStep -Status "failed" -ErrorMsg $_.Exception.Message
+        }
         Write-ErrorMsg "Error: $_"
         Write-Host ""
         Write-Warn "Podes volver a ejecutar el wizard cuando quieras."
