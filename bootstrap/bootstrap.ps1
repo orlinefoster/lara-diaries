@@ -1,572 +1,111 @@
 ﻿#!/usr/bin/env pwsh
 # Lara Diaries - Windows Bootstrap
-# Usage: .\bootstrap.ps1 [-Check] [-DryRun] [-NonInteractive <json>]
-# Requires: PowerShell 5.1+ or PowerShell Core 7+
-
-<#
-.SYNOPSIS
-    Lara Diaries bootstrap script for Windows.
-.DESCRIPTION
-    Checks for git, gh CLI, Node.js, winget, and guides through setup.
-
-    -Check           : Only check prerequisites and report status.
-    -DryRun          : Show installation plan without making changes.
-    -NonInteractive  : JSON config string for AI-driven install.
-                       Skips all prompts, runs install directly.
-                       Example: '{"pronoun":"she/her","install_gentle_ai":true}'
-                       Upgrade fields: backup_existing, sync_memories, restore_agents, install_type
-.NOTES
-    Compatible with Windows PowerShell 5.1 and PowerShell Core 7+.
-#>
-
-param(
-    [switch]$Check,
-    [switch]$DryRun,
-    [string]$NonInteractive
-)
+# Usage: .\bootstrap.ps1 [install|doctor|--version]
+# Downloads and runs the lara-installer binary, with fallback to wizard-core.
 
 $ErrorActionPreference = "Stop"
-$script:IsDryRun = $DryRun
-$script:IsCheckOnly = $Check
-$script:NonInteractiveConfig = if ($NonInteractive) { $NonInteractive } else { $null }
 
-# ---- BANNER -----------------------------------------------------------------
-function Show-Banner {
-    Clear-Host
-    Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
-    Write-Host "  |                                         |" -ForegroundColor Cyan
-    Write-Host "  |      LARA DIARIES BOOTSTRAP             |" -ForegroundColor Cyan
-    Write-Host "  |            v1.0.0                       |" -ForegroundColor Cyan
-    Write-Host "  |                                         |" -ForegroundColor Cyan
-    Write-Host "  |  Tu asistente siempre te espera.        |" -ForegroundColor Cyan
-    Write-Host "  |                                         |" -ForegroundColor Cyan
-    Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  Sistema de bootstrap para opencode + Gentle AI" -ForegroundColor Cyan
-    Write-Host ""
+# Configurable binary download URL (override via env var)
+$script:BinaryBaseUrl = if ($env:LARA_INSTALLER_BASE_URL) {
+    $env:LARA_INSTALLER_BASE_URL
+} else {
+    "https://github.com/orlinefoster/lara-diaries/releases/latest/download"
 }
 
-# ---- OS DETECTION ------------------------------------------------------------"-"-"-"-
-function Test-WindowsOS {
-    $os = [Environment]::OSVersion
-    $isWindows = ($os.Platform -eq [System.PlatformID]::Win32NT)
-    if (-not $isWindows) {
-        Write-Host "[FAIL] Este script es para Windows. Detectado: $($os.ToString())" -ForegroundColor Red
-        Write-Host "  Usa bootstrap.sh para Linux/macOS." -ForegroundColor Yellow
+$script:Version = "0.1.0"
+$script:BinDir = Join-Path $env:LOCALAPPDATA "LaraDiaries\bin"
+
+function Get-BinaryName {
+    return "lara-installer-windows-amd64.exe"
+}
+
+function Get-BinaryPath {
+    return Join-Path $script:BinDir "lara-installer.exe"
+}
+
+function Install-Binary {
+    $binaryName = Get-BinaryName
+    $binaryPath = Get-BinaryPath
+    $binDir = $script:BinDir
+
+    Write-Host "[..] Downloading lara-installer v$($script:Version)..." -ForegroundColor Cyan
+    $url = "$($script:BinaryBaseUrl)/$binaryName"
+    $tempFile = Join-Path $env:TEMP $binaryName
+
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tempFile -UseBasicParsing -ErrorAction Stop
+    } catch {
+        Write-Host "[!] Download failed: $_" -ForegroundColor Yellow
         return $false
     }
-    Write-Host "[OK] Sistema operativo: Windows $($os.VersionString)" -ForegroundColor Green
+
+    # Verify SHA256 if checksum file is available
+    $checksumUrl = "$($script:BinaryBaseUrl)/$binaryName.sha256"
+    try {
+        $checksumContent = (Invoke-WebRequest -Uri $checksumUrl -UseBasicParsing -ErrorAction Stop).Content.Trim()
+        $expectedHash = $checksumContent.Split(' ')[0]
+        $actualHash = (Get-FileHash -LiteralPath $tempFile -Algorithm SHA256).Hash.ToLower()
+        if ($actualHash -ne $expectedHash.ToLower()) {
+            Write-Host "[!] SHA256 checksum mismatch." -ForegroundColor Red
+            Write-Host "  Expected: $expectedHash" -ForegroundColor Red
+            Write-Host "  Got:      $actualHash" -ForegroundColor Red
+            Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue
+            return $false
+        }
+        Write-Host "[OK] Checksum verified." -ForegroundColor Green
+    } catch {
+        Write-Host "[!] No checksum file available, skipping verification." -ForegroundColor Yellow
+    }
+
+    # Move binary to bin dir
+    if (-not (Test-Path -LiteralPath $binDir)) {
+        $null = New-Item -ItemType Directory -Path $binDir -Force -ErrorAction Stop
+    }
+    try {
+        Move-Item -LiteralPath $tempFile -Destination $binaryPath -Force -ErrorAction Stop
+    } catch {
+        Write-Host "[!] Could not move binary to $binDir : $_" -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "[OK] Binary installed to $binaryPath" -ForegroundColor Green
     return $true
 }
 
-# ---- STATE MACHINE -----------------------------------------------------------"-"-"-"-"-
-# Lock file + state.json for atomic install with resume
-
-function Get-LaraStateDir {
-    $dir = Join-Path $env:LOCALAPPDATA "LaraDiaries"
-    if (-not (Test-Path -LiteralPath $dir)) {
-        $null = New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue
-    }
-    return $dir
-}
-
-function Get-LaraStateFile {
-    return Join-Path (Get-LaraStateDir) "state.json"
-}
-
-function Get-LaraLockFile {
-    return Join-Path (Get-LaraStateDir) "install.lock"
-}
-
-function Write-LaraState {
-    param([hashtable]$State)
-    $path = Get-LaraStateFile
-    try {
-        $json = $State | ConvertTo-Json -Compress
-        $json | Set-Content -Path $path -Encoding UTF8 -Force
-    } catch {
-        Write-Host "[!] No se pudo escribir state.json: $_" -ForegroundColor Yellow
-    }
-}
-
-function Read-LaraState {
-    $path = Get-LaraStateFile
-    if (-not (Test-Path -LiteralPath $path)) {
-        return $null
-    }
-    try {
-        $content = Get-Content -Path $path -Raw -Encoding UTF8 -ErrorAction Stop
-        $state = $content | ConvertFrom-Json -ErrorAction Stop
-        return $state
-    } catch {
-        Write-Host "[!] state.json corrupto -- regenerando." -ForegroundColor Yellow
-        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-}
-
-function New-InitialState {
-    param([string]$InstallType = "fresh")
-    $id = [guid]::NewGuid().ToString()
-    $now = (Get-Date).ToString("o")
-    return @{
-        version      = 1
-        install_id   = $id
-        created_at   = $now
-        updated_at   = $now
-        install_type = $InstallType
-        steps        = @{}
-    }
-}
-
-function New-LaraLock {
-    $lockPath = Get-LaraLockFile
-    $pid = [System.Diagnostics.Process]::GetCurrentProcess().Id
-    $timestamp = (Get-Date).ToString("o")
-    $hostname = [Environment]::MachineName
-    $content = "$pid`n$timestamp`n$hostname"
-    try {
-        $content | Set-Content -Path $lockPath -Encoding UTF8 -Force -ErrorAction Stop
-        return $true
-    } catch {
-        Write-Host "[!] No se pudo crear lock file: $_" -ForegroundColor Yellow
-        return $false
-    }
-}
-
-function Remove-LaraLock {
-    $lockPath = Get-LaraLockFile
-    if (Test-Path -LiteralPath $lockPath) {
-        Remove-Item -Path $lockPath -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Test-LaraLockStale {
-    $lockPath = Get-LaraLockFile
-    if (-not (Test-Path -LiteralPath $lockPath)) {
-        return "none"  # no lock
-    }
-    try {
-        $lines = Get-Content -Path $lockPath -Encoding UTF8 -ErrorAction Stop
-        $lockPid = [int]$lines[0].Trim()
-        # Check if process is still running
-        $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
-        if (-not $proc) {
-            return "stale"  # process died
-        }
-        return "active"
-    } catch {
-        return "stale"  # unreadable = stale
-    }
-}
-
-function Get-LaraLockPid {
-    $lockPath = Get-LaraLockFile
-    if (-not (Test-Path -LiteralPath $lockPath)) { return $null }
-    try {
-        $lines = Get-Content -Path $lockPath -Encoding UTF8 -ErrorAction Stop
-        return [int]$lines[0].Trim()
-    } catch { return $null }
-}
-
-function Invoke-LockGuard {
-    $lockStatus = Test-LaraLockStale
-    if ($lockStatus -eq "none") {
-        return $true  # no lock, proceed
-    }
-    if ($lockStatus -eq "stale") {
-        $lockPid = Get-LaraLockPid
-        if ($lockPid) {
-            Write-Host "[!] Lock file del proceso PID $lockPid parece estar obsoleto." -ForegroundColor Yellow
-        } else {
-            Write-Host "[!] Lock file de una instalacion anterior detectado." -ForegroundColor Yellow
-        }
-        Write-Host "    La instalacion parece haber sido interrumpida." -ForegroundColor Yellow
-        $clean = Read-Host "    Eliminarlo y continuar? (S/N, predeterminado: N)"
-        if ($clean -like "S*" -or $clean -like "s*") {
-            Remove-LaraLock
-            Write-Host "[OK] Lock eliminado. Continuando..." -ForegroundColor Green
-            return $true
-        } else {
-            Write-Host "[!] Abortando. Ejecuta de nuevo cuando quieras." -ForegroundColor Yellow
-            return $false
-        }
-    }
-    # Active lock
-    Write-Host "[!] Otra instalacion ya esta en progreso." -ForegroundColor Red
-    Write-Host "    Si crees que es un error, borra manualmente:" -ForegroundColor Yellow
-    Write-Host "    $lockPath" -ForegroundColor Yellow
-    return $false
-}
-
-function Get-ResumeState {
-    $state = Read-LaraState
-    if (-not $state -or -not $state.steps) {
-        return $null, @()  # no state, nothing to resume
-    }
-    $completed = @()
-    $pending = @()
-    foreach ($step in $state.steps.PSObject.Properties) {
-        if ($step.Value.status -eq "success") {
-            $completed += $step.Name
-        } else {
-            $pending += $step.Name
-        }
-    }
-    if ($pending.Count -eq 0 -and $completed.Count -gt 0) {
-        # All steps complete ' upgrade scenario
-        return "upgrade", $completed
-    }
-    if ($pending.Count -gt 0) {
-        return "resume", $completed
-    }
-    return $null, @()
-}
-
-function Update-StepState {
-    param(
-        [string]$StepName,
-        [string]$Status,
-        [string]$ErrorMsg = $null,
-        [string]$Rollback = $null
-    )
-    $state = Read-LaraState
-    if (-not $state) {
-        $state = New-InitialState -InstallType "fresh"
-    }
-    if (-not $state.steps) { $state.steps = @{} }
-    $now = (Get-Date).ToString("o")
-    if (-not $state.steps.$StepName) {
-        $state.steps.$StepName = @{
-            started_at = $now
-            completed_at = $null
-            status = "pending"
-            error = $null
-            rollback = $null
-        }
-    }
-    $state.steps.$StepName.status = $Status
-    $state.updated_at = $now
-    if ($Status -eq "success" -or $Status -eq "failed" -or $Status -eq "skipped") {
-        $state.steps.$StepName.completed_at = $now
-    }
-    if ($ErrorMsg) { $state.steps.$StepName.error = $ErrorMsg }
-    if ($Rollback) { $state.steps.$StepName.rollback = $Rollback }
-
-    # Convert back to hashtable for Write-LaraState
-    $ht = @{
-        version      = $state.version
-        install_id   = $state.install_id
-        created_at   = $state.created_at
-        updated_at   = $state.updated_at
-        install_type = $state.install_type
-        steps        = @{}
-    }
-    foreach ($prop in $state.steps.PSObject.Properties) {
-        $ht.steps[$prop.Name] = @{
-            status       = $prop.Value.status
-            started_at   = $prop.Value.started_at
-            completed_at = $prop.Value.completed_at
-            error        = $prop.Value.error
-            rollback     = $prop.Value.rollback
-        }
-    }
-    Write-LaraState -State $ht
-}
-
-# ---- ADMIN CHECK -----------------------------------------------------------
-function Test-AdminRights {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if (-not $isAdmin) {
-        Write-Host "[!] No estas ejecutando como Administrador." -ForegroundColor Yellow
-        Write-Host "    Algunas instalaciones (winget) podrian fallar." -ForegroundColor Yellow
-        Write-Host "    Sugerencia: Ejecuta PowerShell como Administrador." -ForegroundColor Yellow
-        Write-Host ""
-    } else {
-        Write-Host "[OK] Ejecutando como Administrador" -ForegroundColor Green
-    }
-    return $isAdmin
-}
-
-# ---- PREREQUISITE CHECK -----------------------------------------------------"-"-"-"-"-
-function Test-Prerequisite {
-    param([string]$Name, [string]$WinGetId, [string]$DownloadUrl)
-
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd) {
-        $version = & $Name --version 2>$null
-        if (-not $version) { $version = "(version desconocida)" }
-        Write-Host "  [OK] $Name encontrado: $version" -ForegroundColor Green
-        return $true
-    }
-
-    Write-Host "  [FAIL] $Name NO encontrado" -ForegroundColor Red
-
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-        Write-Host "    Instalando con winget: $WinGetId ..." -ForegroundColor Yellow
-        try {
-            $null = & winget install --id $WinGetId --accept-source-agreements --accept-package-agreements 2>&1
-            $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-            if ($cmd) {
-                Write-Host "    [OK] $Name instalado correctamente" -ForegroundColor Green
-                return $true
-            } else {
-                Write-Host "    [!] La instalacion de $Name podria no haber funcionado." -ForegroundColor Red
-                Write-Host "     Descargalo manualmente: $DownloadUrl" -ForegroundColor Yellow
-                return $false
-            }
-        } catch {
-            Write-Host "    [!] Error al instalar $Name con winget: $_" -ForegroundColor Red
-            Write-Host "     Descargalo manualmente: $DownloadUrl" -ForegroundColor Yellow
-            return $false
-        }
-    } else {
-        Write-Host "    winget no esta disponible." -ForegroundColor Yellow
-        Write-Host "    Descargalo manualmente: $DownloadUrl" -ForegroundColor Yellow
-        return $false
-    }
-}
-
-function Test-Prerequisites {
-    Write-Host "`n  Verificando prerequisitos..." -ForegroundColor Cyan
-    Write-Host ""
-
-    $script:PrereqResults = @{
-        git  = Test-Prerequisite -Name "git"  -WinGetId "Git.Git"           -DownloadUrl "https://git-scm.com/downloads/win"
-        gh   = Test-Prerequisite -Name "gh"   -WinGetId "GitHub.cli"        -DownloadUrl "https://cli.github.com/"
-        node = Test-Prerequisite -Name "node" -WinGetId "OpenJS.NodeJS.LTS" -DownloadUrl "https://nodejs.org/"
-    }
-
-    # VSCode is optional -- check but don't fail if missing
-    $codeCmd = Get-Command "code" -ErrorAction SilentlyContinue
-    if ($codeCmd) {
-        Write-Host "  [OK] VSCode encontrado" -ForegroundColor Green
-    } else {
-        Write-Host "  [!] VSCode no encontrado (opcional, se instalara en el wizard)" -ForegroundColor Yellow
-    }
-
-    Write-Host ""
-    $count = 0
-    foreach ($key in $script:PrereqResults.Keys) { if (-not $script:PrereqResults[$key]) { $count = $count + 1 } }
-    if ($count -gt 0) {
-        Write-Host "[!] Algunos prerequisitos no se pudieron instalar automaticamente." -ForegroundColor Yellow
-        Write-Host "   Instalalos manualmente y volve a ejecutar este script.`n" -ForegroundColor Yellow
-        return $false
-    }
-    Write-Host "[OK] Todos los prerequisitos estan en orden.`n" -ForegroundColor Green
-    return $true
-}
-
-# ---- CHECK MODE ------------------------------------------------------------
-function Start-CheckOnly {
-    Write-Host "`n  [CHECK MODE] Solo diagnostico - no se instalara nada.`n" -ForegroundColor Cyan
-
-    if (-not $script:PrereqResults) {
-        $null = Test-Prerequisites
-    }
-
-    # Detect existing config
-    $configDir = Join-Path $HOME ".config\opencode"
-    $hasConfig = Test-Path (Join-Path $configDir "opencode.json")
-    $hasLaraPlan = Test-Path (Join-Path $configDir "agents\lara-plan.md")
-    $hasLaraVip = Test-Path (Join-Path $configDir "agents\lara-vip.md")
-    $hasEngram = Test-Path (Join-Path $HOME ".engram\engram.db")
-
-    Write-Host "`n  Resumen del check:" -ForegroundColor Cyan
-    Write-Host "  git:  $(if ($script:PrereqResults['git'])  { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['git'])  { 'Green' } else { 'Red' })
-    Write-Host "  gh:   $(if ($script:PrereqResults['gh'])   { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['gh'])   { 'Green' } else { 'Red' })
-    Write-Host "  node: $(if ($script:PrereqResults['node']) { 'OK' } else { 'FALTA' })" -ForegroundColor $(if ($script:PrereqResults['node']) { 'Green' } else { 'Red' })
-    $codeCmd = Get-Command "code" -ErrorAction SilentlyContinue
-    Write-Host "  code: $(if ($codeCmd) { 'OK' } else { 'OPCIONAL' })" -ForegroundColor $(if ($codeCmd) { 'Green' } else { 'Yellow' })
-    $opencodeCmd = Get-Command "opencode" -ErrorAction SilentlyContinue
-    Write-Host "  opencode: $(if ($opencodeCmd) { 'OK' } else { 'FALTA - instalar primero' })" -ForegroundColor $(if ($opencodeCmd) { 'Green' } else { 'Red' })
-    Write-Host "`n  Config existente:" -ForegroundColor Cyan
-    Write-Host "  opencode.json: $(if ($hasConfig) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasConfig) { 'Green' } else { 'Gray' })
-    Write-Host "  Lara-Plan:     $(if ($hasLaraPlan) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasLaraPlan) { 'Green' } else { 'Gray' })
-    Write-Host "  Lara-VIP:      $(if ($hasLaraVip) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasLaraVip) { 'Green' } else { 'Gray' })
-    Write-Host "  Engram DB:     $(if ($hasEngram) { 'OK' } else { 'NO' })" -ForegroundColor $(if ($hasEngram) { 'Green' } else { 'Gray' })
-    Write-Host "`n  Tipo de instalacion: $(if ($hasConfig) { 'UPGRADE (config existente)' } else { 'FRESH (primera vez)' })" -ForegroundColor Yellow
-    Write-Host "`n  Para instalar: ejecuta .\bootstrap.ps1 sin parametros." -ForegroundColor Cyan
-    Write-Host "  Para simular:  ejecuta .\bootstrap.ps1 -DryRun`n" -ForegroundColor Cyan
-}
-
-# ---- DRY-RUN MODE ----------------------------------------------------------
-function Start-DryRun {
-    Write-Host "`n  [DRY-RUN] Plan de instalacion - nada se modificara.`n" -ForegroundColor Cyan
-
-    # Detectar estado de cada componente
-    $gitOk     = Get-Command "git" -ErrorAction SilentlyContinue
-    $ghOk      = Get-Command "gh" -ErrorAction SilentlyContinue
-    $nodeOk    = Get-Command "node" -ErrorAction SilentlyContinue
-    $codeOk    = Get-Command "code" -ErrorAction SilentlyContinue
-    $engramOk  = Get-Command "engram" -ErrorAction SilentlyContinue
-    $opencodeOk = Get-Command "opencode" -ErrorAction SilentlyContinue
-    $gaDir     = Test-Path (Join-Path $HOME "gentle-ai")
-    $skillsDir = Test-Path (Join-Path $env:APPDATA "opencode\skills\Gentleman-Skills")
-    $ggaDir    = Test-Path (Join-Path $HOME "gentleman-guardian-angel")
-    $ghUser    = & gh api user --jq .login 2>$null
-    $engramRepo = Test-Path (Join-Path $HOME "engram-memories")
-    $configRepo = Test-Path (Join-Path $HOME "opencode-config")
-
-    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
-    Write-Host "  |               PLAN DE INSTALACION                    |" -ForegroundColor Cyan
-    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
-    Write-Host "  | Prerequisites:                                       |" -ForegroundColor Cyan
-    Write-Host "  |   git:       $(if ($gitOk) { 'OK' } else { 'FALTA' })                                         |"
-    Write-Host "  |   gh:        $(if ($ghOk) { 'OK' } else { 'FALTA' })                                         |"
-    Write-Host "  |   node:      $(if ($nodeOk) { 'OK' } else { 'FALTA' })                                         |"
-    Write-Host "  |   opencode:  $(if ($opencodeOk) { 'OK' } else { 'FALTA - instalarlo primero' })                |"
-    Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
-    Write-Host "  | Componentes a instalar/configurar:                    |" -ForegroundColor Cyan
-    if ($gaDir)    { Write-Host "  |   [OK] Gentle AI (ya instalado)                              |" -ForegroundColor Green }
-    else           { Write-Host "  |   [+] Gentle AI (pendiente)                                  |" -ForegroundColor Yellow }
-    if ($skillsDir){ Write-Host "  |   [OK] Gentleman Skills (ya instalado)                        |" -ForegroundColor Green }
-    else           { Write-Host "  |   [+] Gentleman Skills (pendiente)                            |" -ForegroundColor Yellow }
-    if ($engramOk) { Write-Host "  |   [OK] Engram (ya instalado)                                  |" -ForegroundColor Green }
-    else           { Write-Host "  |   [+] Engram (pendiente)                                      |" -ForegroundColor Yellow }
-    if ($codeOk)   { Write-Host "  |   [OK] VSCode (ya instalado)                                  |" -ForegroundColor Green }
-    else           { Write-Host "  |   [?] VSCode (opcional - recomendado)                         |" -ForegroundColor Yellow }
-    if ($ggaDir)   { Write-Host "  |   [OK] GGA code review (ya instalado)                         |" -ForegroundColor Green }
-    else           { Write-Host "  |   [?] GGA code review (opcional)                              |" -ForegroundColor Gray }
-    Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
-    Write-Host "  | Repositorios GitHub:                                 |" -ForegroundColor Cyan
-    if ($ghUser)   { Write-Host "  |   Usuario: $($ghUser.PadRight(44))|" }
-    else           { Write-Host "  |   gh no autenticado - se pedira login                          |" -ForegroundColor Yellow }
-    if ($engramRepo){Write-Host "  |   [OK] engram-memories (local)                                |" -ForegroundColor Green }
-    else            {Write-Host "  |   [+] engram-memories (se creara)                              |" -ForegroundColor Yellow }
-    if ($configRepo){Write-Host "  |   [OK] opencode-config (local)                                |" -ForegroundColor Green }
-    else            {Write-Host "  |   [+] opencode-config (se creara)                             |" -ForegroundColor Yellow }
-    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
-    # Detect existing config
-    $configDir = Join-Path $HOME ".config\opencode"
-    $hasConfig = Test-Path (Join-Path $configDir "opencode.json")
-    $hasLaraPlan = Test-Path (Join-Path $configDir "agents\lara-plan.md")
-    $hasLaraVip = Test-Path (Join-Path $configDir "agents\lara-vip.md")
-    $hasEngram = Test-Path (Join-Path $HOME ".engram\engram.db")
-
-    if ($hasConfig) {
-        Write-Host "  |------------------------------------------------------|" -ForegroundColor Cyan
-        Write-Host "  | Config existente detectada                          |" -ForegroundColor Yellow
-        if ($hasLaraPlan){Write-Host "  |   [OK] Lara-Plan (agente)                               |" -ForegroundColor Green}
-        else            {Write-Host "  |   [+] Lara-Plan (se creara)                            |" -ForegroundColor Yellow}
-        if ($hasLaraVip){Write-Host "  |   [OK] Lara-VIP (agente)                               |" -ForegroundColor Green}
-        else            {Write-Host "  |   [+] Lara-VIP (se creara)                            |" -ForegroundColor Yellow}
-        if ($hasEngram) {Write-Host "  |   [OK] Engram memorias (datos existentes)               |" -ForegroundColor Green}
-        else            {Write-Host "  |   [ ] Engram (sin datos previos)                        |" -ForegroundColor Gray}
-        Write-Host "  |   Se preguntara antes de modificar cualquier cosa.   |" -ForegroundColor Yellow
-    }
-
-    Write-Host "  | Sync: cada 30 min via Task Scheduler                  |" -ForegroundColor Cyan
-    Write-Host "  +------------------------------------------------------+" -ForegroundColor Cyan
-
-    Write-Host "`n  [DRY-RUN] Simulacion completada. Nada se instalo ni modifico." -ForegroundColor Cyan
-    Write-Host "  Para instalar de verdad, ejecuta .\bootstrap.ps1 sin parametros.`n" -ForegroundColor Cyan
-}
-
-# ---- WIZARD MAIN -----------------------------------------------------------
-function Start-WizardMain {
-    param([string[]]$CompletedSteps = @())
-    if ($script:IsCheckOnly) { Start-CheckOnly; return }
-    if ($script:IsDryRun) { Start-DryRun; return }
-
-    Write-Host "Queres que proceda con la configuracion completa de Lara Diaries?" -ForegroundColor Magenta
-    $confirm = Read-Host "  (S/N, predeterminado: S)"
-
-    $shouldProceed = $true
-    if ($confirm -ne "") {
-        if ($confirm -notlike "S*" -and $confirm -notlike "s*") {
-            $shouldProceed = $false
-        }
-    }
-    if (-not $shouldProceed) {
-        Write-Host "`n  Bueno, cuando quieras estoy aca." -ForegroundColor Cyan
-        Write-Host "  Ejecuta bootstrap.ps1 de nuevo cuando estes listx.`n" -ForegroundColor Cyan
-        exit 0
-    }
+function Start-FallbackWizard {
+    Write-Host "[!] Falling back to script-based wizard..." -ForegroundColor Yellow
 
     $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
-    $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
+    $resolvedPath = Resolve-Path $wizardCore -ErrorAction SilentlyContinue
+
+    if (-not $resolvedPath) {
+        Write-Host "[FAIL] wizard-core.ps1 not found at $wizardCore" -ForegroundColor Red
+        Write-Host "  Make sure you are running from the full lara-diaries repository." -ForegroundColor Yellow
+        exit 1
+    }
+
     . $resolvedPath
-    Start-Wizard -CompletedSteps $CompletedSteps
+    Start-Wizard
 }
 
-# ---- ENTRY POINT -----------------------------------------------------------
-function Main {
-    Show-Banner
-    if (-not (Test-WindowsOS)) { exit 1 }
-    $null = Test-AdminRights
+# ---- MAIN ----
+$binaryPath = Get-BinaryPath
 
-    # Check-only mode: skip prereq install, just report
-    if ($script:IsCheckOnly) { Start-CheckOnly; return }
-
-    # Dry-run mode: check prereqs but don't block on missing
-    if ($script:IsDryRun) {
-        if (-not $script:PrereqResults) { $null = Test-Prerequisites }
-        Start-DryRun
-        return
-    }
-
-    # Non-interactive mode: AI-driven install, skip all prompts
-    if ($script:NonInteractiveConfig) {
-        Write-Host "  [NON-INTERACTIVE] Recibiendo configuracion via JSON...`n" -ForegroundColor Cyan
-        $wizardCore = Join-Path $PSScriptRoot "..\modules\wizard-core.ps1"
-        $resolvedPath = Resolve-Path $wizardCore -ErrorAction Stop
-        . $resolvedPath
-        Start-NonInteractiveWizard -ConfigJson $script:NonInteractiveConfig
-        return
-    }
-
-    # Normal mode: prereqs must be satisfied
-    if (-not (Test-Prerequisites)) {
-        Write-Host "Resolve los prerequisitos faltantes y volve a ejecutar el script.`n" -ForegroundColor Yellow
-        exit 1
-    }
-
-    # Lock guard -- prevent parallel installs
-    if (-not (Invoke-LockGuard)) { exit 1 }
-
-    # Resume check -- detect state from previous run
-    $resumeType, $completedSteps = Get-ResumeState
-    if ($resumeType -eq "upgrade") {
-        Write-Host "[!] Detectada instalacion previa completa." -ForegroundColor Yellow
-        $reinstall = Read-Host "    Queres reconfigurar (upgrade)? (S/N, predeterminado: N)"
-        if ($reinstall -like "S*" -or $reinstall -like "s*") {
-            Write-Host "[OK] Iniciando upgrade..." -ForegroundColor Green
-        } else {
-            Write-Host "[OK] Saliendo sin cambios." -ForegroundColor Cyan
-            exit 0
-        }
-    } elseif ($resumeType -eq "resume") {
-        Write-Host "[!] Detectada instalacion interrumpida." -ForegroundColor Yellow
-        Write-Host "    Pasos completados: $($completedSteps -join ', ')" -ForegroundColor Cyan
-        Write-Host "    Reanudando desde el primer paso pendiente..." -ForegroundColor Cyan
-    }
-
-    # Create install lock
-    if (-not (New-LaraLock)) {
-        Write-Host "[!] No se pudo crear el lock de instalacion. Abortando." -ForegroundColor Red
-        exit 1
-    }
-
-    try {
-        Start-WizardMain -CompletedSteps $completedSteps
-    } finally {
-        # Always release lock (even on crash/error)
-        Remove-LaraLock
-    }
+if (Test-Path -LiteralPath $binaryPath) {
+    Write-Host "[OK] lara-installer binary found. Running..." -ForegroundColor Green
+    & $binaryPath @args
+    exit $LASTEXITCODE
 }
 
-# Run only if not dot-sourced
-if ($MyInvocation.InvocationName -ne '.') {
-    Main
+# Binary not found: attempt download
+Write-Host "[..] lara-installer not found at $binaryPath" -ForegroundColor Yellow
+$installed = Install-Binary
+
+if (-not $installed) {
+    Start-FallbackWizard
+    exit $LASTEXITCODE
 }
 
-
-
-
-
-
-
+# Run the freshly installed binary
+& $binaryPath @args
+exit $LASTEXITCODE
