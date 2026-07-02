@@ -5,7 +5,7 @@
 
 ## Resumen Ejecutivo
 
-**30 issues encontrados**: 7 🔴 CRITICAL · 4 🔴 HIGH · 13 🟡 MEDIUM · 6 🟢 LOW
+**33 issues encontrados**: 7 🔴 CRITICAL · 4 🔴 HIGH · 16 🟡 MEDIUM · 6 🟢 LOW
 
 Del `tareas-pendientes.md` anterior (14 items de la review de `feat/standalone-installer-phase-4`), 11 estaban marcados ✅ pero la auditoría reveló que **2 de esos fix están rotos** (items 8 y 10). Este documento unifica todo y agrega los hallazgos nuevos de dos auditorías posteriores (H4, M9, y 8 issues nuevos encontrados en la segunda auditoría).
 
@@ -393,6 +393,47 @@ c := checkPrereq("go")
 
 ---
 
+## 🏗️ ARCHITECTURE — Mejoras estructurales
+
+### A1. `external/` con 106MB de repos clonados sin tracking
+
+**Archivo**: `external/`
+**Severidad**: MEDIUM — peso innecesario en el repo
+
+`external/engram/` y `external/gentle-ai/` son copias completas de los upstreams (~106MB). No son submodules, no hay tracking con upstream. Cada clone del repo pesa 106MB extra.
+
+**Fix**: Eliminar `external/` del repo. El wizard ya clona estos repos en install-time. Agregar `external/` a `.gitignore` para prevenir que vuelva a commiteare.
+
+---
+
+### A2. Cero tests en shell wizard y PS wizard
+
+**Archivos**: `modules/wizard-core.sh`, `modules/wizard-core.ps1`
+**Severidad**: MEDIUM — el código más grande del proyecto no tiene cobertura
+
+`wizard-core.sh` (1680+ líneas) y `wizard-core.ps1` (~1272 líneas) no tienen ningún test automatizado. El único testing está en Go (`cmd/lara-installer/`, 35 tests).
+
+**Fix**: Agregar tests unitarios para las funciones más críticas:
+- Shell: `validate_json()`, `get_json_val()`, `component_status()` con bats
+- PS: `Install-Component`, JSON parsing, template rendering con Pester
+- CI: ejecutar bats + Pester en CI
+
+---
+
+### A3. `install_components()` con 461 líneas hace demasiado
+
+**Archivo**: `modules/wizard-core.sh`
+**Severidad**: MEDIUM — función viola Single Responsibility Principle
+
+`install_components()` instalaba Gentle AI, Gentleman Skills, Engram, VSCode, GGA, creaba agentes, generaba `opencode.json`, creaba repos GitHub, clonaba repos, y hacía backup — todo en una función de 461 líneas.
+
+**Fix**: Extraer a funciones con responsabilidad única:
+- `install_gentle_ai()`, `install_gentleman_skills()`, `install_vscode()`, `install_gga()`
+- `setup_github_repos()`, `backup_initial_config()`
+- Cada función testable en aislamiento
+
+---
+
 ## 🟢 LOW — Estilo, mínimos
 
 ### L1. `LockFile()` está en `state.go` en vez de `lock.go`
@@ -498,6 +539,9 @@ graph TD
 | 22 | doctor_test asume `go` en PATH | `doctor_test.go` | 5 min | 🟡 N5 | ✅ |
 | 23 | Windows shellOut sourcea .sh via PowerShell | `install.go` | 10 min | 🟢 N6 | ✅ |
 | 24 | CI release body es schema doc | `release-installer.yml` | 5 min | 🟢 N7 | ✅ |
+| 25 | `external/` 106MB repos sin tracking | `external/` | 5 min | 🟡 A1 | ✅ |
+| 26 | Cero tests en shell/PS wizards | `wizard-core.sh`, `.ps1` | 60 min | 🟡 A2 | ✅ |
+| 27 | `install_components()` viola SRP | `wizard-core.sh` | 30 min | 🟡 A3 | ✅ |
 
 ---
 

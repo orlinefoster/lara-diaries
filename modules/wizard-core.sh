@@ -889,6 +889,208 @@ with open('$opencode_output', 'w') as f:
 }
 
 # =============================================================================
+# install_gentle_ai — install or update Gentle AI
+# =============================================================================
+install_gentle_ai() {
+    component_status "Gentle AI" "$([[ -d "$HOME/gentle-ai" ]] && echo true || echo false)"
+    local ga_status=$?
+
+    if [[ $ga_status -eq 0 ]]; then
+        log_info "Gentle AI ya esta instalado. Actualizando..."
+        if [[ "$DRY_RUN" != "true" ]]; then
+            git -C "$HOME/gentle-ai" pull --rebase 2>/dev/null || log_warn "Could not update gentle-ai."
+        fi
+    elif [[ $ga_status -eq 2 ]]; then
+        : # dry-run
+    else
+        if git clone https://github.com/Gentleman-Programming/gentle-ai.git "$HOME/gentle-ai"; then
+            log_info "gentle-ai cloned."
+            local ga_installer=""
+            if [[ -f "$HOME/gentle-ai/scripts/install.sh" ]]; then
+                ga_installer="$HOME/gentle-ai/scripts/install.sh"
+            elif [[ -f "$HOME/gentle-ai/install.sh" ]]; then
+                ga_installer="$HOME/gentle-ai/install.sh"
+            fi
+            if [[ -n "$ga_installer" ]]; then
+                bash "$ga_installer" || log_warn "gentle-ai installer reported issues."
+            else
+                if command -v gentle-ai &>/dev/null; then
+                    gentle-ai install 2>/dev/null || log_warn "gentle-ai install command failed."
+                else
+                    log_warn "gentle-ai installer script not found at scripts/install.sh"
+                    log_info "Run 'bash $HOME/gentle-ai/scripts/install.sh' manually."
+                fi
+            fi
+        else
+            log_error "Failed to clone gentle-ai. Check internet connection."
+            rollback_remove_dir "$HOME/gentle-ai"
+            return 1
+        fi
+    fi
+}
+
+# =============================================================================
+# install_gentleman_skills — clone Gentleman Skills under opencode config dir
+# =============================================================================
+install_gentleman_skills() {
+    local skills_dir="$OPENCODE_CONFIG_DIR/skills"
+    component_status "Gentleman Skills" "$([[ -d "$skills_dir/gentleman-skills" ]] && echo true || echo false)"
+    local gs_status=$?
+
+    if [[ $gs_status -eq 0 ]]; then
+        log_info "Gentleman Skills ya instalado."
+    elif [[ $gs_status -eq 2 ]]; then
+        : # dry-run
+    else
+        mkdir -p "$skills_dir"
+        if git clone https://github.com/Gentleman-Programming/Gentleman-Skills.git "$skills_dir/gentleman-skills"; then
+            log_info "Gentleman Skills installed."
+        else
+            log_warn "Failed to clone Gentleman Skills. Continuing..."
+            rollback_remove_dir "$skills_dir/gentleman-skills"
+        fi
+    fi
+}
+
+# =============================================================================
+# install_vscode — install Visual Studio Code (optional, platform-aware)
+# =============================================================================
+install_vscode() {
+    component_status "VSCode" "$(command -v code &>/dev/null && echo true || echo false)" "true"
+    local vscode_status=$?
+    if [[ $vscode_status -eq 0 ]]; then
+        log_info "VSCode ya instalado: $(code --version 2>&1 | head -1)"
+    elif [[ $vscode_status -eq 2 ]]; then
+        : # dry-run
+    else
+        local PKG_MANAGER=""
+        if command -v apt &>/dev/null; then PKG_MANAGER="apt"
+        elif command -v dnf &>/dev/null; then PKG_MANAGER="dnf"
+        elif command -v pacman &>/dev/null; then PKG_MANAGER="pacman"
+        fi
+        case "$PKG_MANAGER" in
+            apt)
+                sudo apt install -y code 2>/dev/null || {
+                    log_warn "Package 'code' not in apt repo. Installing via .deb..."
+                    local deb_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
+                    local deb_path="/tmp/vscode-$$.deb"
+                    curl -fsSL "$deb_url" -o "$deb_path" && sudo dpkg -i "$deb_path" && rm -f "$deb_path"
+                }
+                ;;
+            dnf)
+                sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>/dev/null || true
+                sudo dnf install -y code 2>/dev/null || {
+                    local rpm_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-rpm-x64"
+                    local rpm_path="/tmp/vscode-$$.rpm"
+                    curl -fsSL "$rpm_url" -o "$rpm_path" && sudo dnf install -y "$rpm_path" && rm -f "$rpm_path"
+                }
+                ;;
+            pacman)
+                sudo pacman -S --noconfirm code 2>/dev/null || {
+                    yay -S --noconfirm visual-studio-code-bin 2>/dev/null || \
+                        log_warn "Could not install VSCode. Install manually"
+                }
+                ;;
+            *)
+                log_warn "Unknown package manager. Install VSCode manually."
+                ;;
+        esac
+        if [[ -x "$(command -v code)" ]]; then
+            log_info "VSCode installed successfully."
+        else
+            log_warn "VSCode installation may need a terminal restart."
+        fi
+    fi
+}
+
+# =============================================================================
+# install_gga — install Gentleman Guardian Angel (optional)
+# =============================================================================
+install_gga() {
+    component_status "Gentleman Guardian Angel" "$([[ -d "$HOME/gentleman-guardian-angel" ]] && echo true || echo false)" "true"
+    local gga_status=$?
+    if [[ $gga_status -eq 0 ]]; then
+        log_info "GGA ya instalado."
+        git -C "$HOME/gentleman-guardian-angel" pull --rebase 2>/dev/null || true
+    elif [[ $gga_status -eq 2 ]]; then
+        : # dry-run
+    else
+        if git clone https://github.com/Gentleman-Programming/gentleman-guardian-angel.git "$HOME/gentleman-guardian-angel"; then
+            if [[ -f "$HOME/gentleman-guardian-angel/install.sh" ]]; then
+                bash "$HOME/gentleman-guardian-angel/install.sh" 2>/dev/null && \
+                    log_info "GGA installed. Run 'gga init' to activate." || \
+                    log_warn "GGA installer had issues."
+            fi
+        else
+            log_error "Failed to clone GGA."
+            rollback_remove_dir "$HOME/gentleman-guardian-angel"
+        fi
+    fi
+}
+
+# =============================================================================
+# setup_github_repos — create and clone GitHub repos for engram and config
+# =============================================================================
+setup_github_repos() {
+    if [[ -z "$GITHUB_USER" ]]; then
+        log_warn "No GitHub user configured — skipping repo creation."
+        log_warn "Create repos manually: engram-memories and opencode-config (both private)."
+        return 0
+    fi
+
+    log_info "Checking GitHub repositories..."
+    for repo in "engram-memories" "opencode-config"; do
+        if gh repo view "$GITHUB_USER/$repo" &>/dev/null; then
+            log_info "Repo exists: $GITHUB_USER/$repo"
+        else
+            log_info "Creating private repo: $GITHUB_USER/$repo ..."
+            gh repo create "$repo" --private --description "Lara Diaries — $repo" || \
+                log_warn "Could not create $repo. Create it manually at https://github.com/new"
+        fi
+    done
+
+    log_info "Cloning repositories..."
+    for repo in "engram-memories" "opencode-config"; do
+        if [[ ! -d "$HOME/$repo" ]]; then
+            if gh repo clone "$GITHUB_USER/$repo" "$HOME/$repo" 2>/dev/null; then
+                log_info "Cloned: $HOME/$repo"
+            else
+                log_warn "Could not clone $repo. Creating local directory..."
+                mkdir -p "$HOME/$repo"
+                git init "$HOME/$repo"
+            fi
+        else
+            log_info "Already exists: $HOME/$repo"
+        fi
+    done
+}
+
+# =============================================================================
+# backup_initial_config — back up opencode config to opencode-config repo
+# =============================================================================
+backup_initial_config() {
+    log_info "Performing initial config backup..."
+    if [[ ! -d "$HOME/opencode-config" ]]; then
+        return 0
+    fi
+    if [[ -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
+        cp "$OPENCODE_CONFIG_DIR/opencode.json" "$HOME/opencode-config/" 2>/dev/null || true
+    fi
+    if [[ -f "$OPENCODE_CONFIG_DIR/AGENTS.md" ]]; then
+        cp "$OPENCODE_CONFIG_DIR/AGENTS.md" "$HOME/opencode-config/" 2>/dev/null || true
+    fi
+    mkdir -p "$HOME/opencode-config/agents"
+    cp "$OPENCODE_CONFIG_DIR/agents/"*.md "$HOME/opencode-config/agents/" 2>/dev/null || true
+
+    cd "$HOME/opencode-config"
+    if [[ -n "$(git status --porcelain)" ]]; then
+        git add .
+        git commit -m "backup: initial config $(date '+%Y-%m-%d')" 2>/dev/null || true
+        git push 2>/dev/null || log_warn "Could not push initial backup. Will retry on sync."
+    fi
+}
+
+# =============================================================================
 # wizard_check_only — diagnose system without installing (--check mode)
 # =============================================================================
 wizard_check_only() {
@@ -999,65 +1201,9 @@ install_components() {
 
     # --- 8a. Gentle AI & Gentleman Skills ---
     if [[ "$INSTALL_GENTLE_AI" == "true" ]]; then
-        component_status "Gentle AI" "$([[ -d "$HOME/gentle-ai" ]] && echo true || echo false)"
-        local ga_status=$?
-
-        if [[ $ga_status -eq 0 ]]; then
-            log_info "Gentle AI ya esta instalado. Actualizando..."
-            if [[ "$DRY_RUN" != "true" ]]; then
-                git -C "$HOME/gentle-ai" pull --rebase 2>/dev/null || log_warn "Could not update gentle-ai."
-            fi
-        elif [[ $ga_status -eq 2 ]]; then
-            : # dry-run — already reported
-        else
-            if git clone https://github.com/Gentleman-Programming/gentle-ai.git "$HOME/gentle-ai"; then
-                log_info "gentle-ai cloned."
-
-                # The installer is in scripts/, not the repo root
-                local ga_installer=""
-                if [[ -f "$HOME/gentle-ai/scripts/install.sh" ]]; then
-                    ga_installer="$HOME/gentle-ai/scripts/install.sh"
-                elif [[ -f "$HOME/gentle-ai/install.sh" ]]; then
-                    ga_installer="$HOME/gentle-ai/install.sh"
-                fi
-
-                if [[ -n "$ga_installer" ]]; then
-                    bash "$ga_installer" || log_warn "gentle-ai installer reported issues."
-                else
-                    # Fallback: run the gentle-ai binary directly if it exists
-                    if command -v gentle-ai &>/dev/null; then
-                        gentle-ai install 2>/dev/null || log_warn "gentle-ai install command failed."
-                    else
-                        log_warn "gentle-ai installer script not found at scripts/install.sh"
-                        log_info "Run 'bash $HOME/gentle-ai/scripts/install.sh' manually."
-                    fi
-                fi
-            else
-                log_error "Failed to clone gentle-ai. Check internet connection."
-                rollback_remove_dir "$HOME/gentle-ai"
-                return 1
-            fi
-        fi
-
-        # --- 8b. Gentleman Skills ---
+        install_gentle_ai
         if [[ "$INSTALL_SKILLS" == "true" ]]; then
-            local skills_dir="$OPENCODE_CONFIG_DIR/skills"
-            component_status "Gentleman Skills" "$([[ -d "$skills_dir/gentleman-skills" ]] && echo true || echo false)"
-            local gs_status=$?
-
-            if [[ $gs_status -eq 0 ]]; then
-                log_info "Gentleman Skills ya instalado."
-            elif [[ $gs_status -eq 2 ]]; then
-                : # dry-run
-            else
-                mkdir -p "$skills_dir"
-                if git clone https://github.com/Gentleman-Programming/Gentleman-Skills.git "$skills_dir/gentleman-skills"; then
-                    log_info "Gentleman Skills installed."
-                else
-                    log_warn "Failed to clone Gentleman Skills. Continuing..."
-                    rollback_remove_dir "$skills_dir/gentleman-skills"
-                fi
-            fi
+            install_gentleman_skills
         fi
     else
         echo -e "  ${GRAY}[Gentle AI] ${BOLD}OMITIDO${RESET}"
@@ -1076,76 +1222,14 @@ install_components() {
 
     # --- 8d. VSCode (optional) ---
     if [[ "${INSTALL_VSCODE:-false}" == "true" ]]; then
-        component_status "VSCode" "$(command -v code &>/dev/null && echo true || echo false)" "true"
-        local vscode_status=$?
-        if [[ $vscode_status -eq 0 ]]; then
-            log_info "VSCode ya instalado: $(code --version 2>&1 | head -1)"
-        elif [[ $vscode_status -eq 2 ]]; then
-            : # dry-run
-        else
-            local PKG_MANAGER=""
-            if command -v apt &>/dev/null; then PKG_MANAGER="apt"
-            elif command -v dnf &>/dev/null; then PKG_MANAGER="dnf"
-            elif command -v pacman &>/dev/null; then PKG_MANAGER="pacman"
-            fi
-            case "$PKG_MANAGER" in
-                apt)
-                    sudo apt install -y code 2>/dev/null || {
-                        log_warn "Package 'code' not in apt repo. Installing via .deb..."
-                        local deb_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64"
-                        local deb_path="/tmp/vscode-$$.deb"
-                        curl -fsSL "$deb_url" -o "$deb_path" && sudo dpkg -i "$deb_path" && rm -f "$deb_path"
-                    }
-                    ;;
-                dnf)
-                    sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc 2>/dev/null || true
-                    sudo dnf install -y code 2>/dev/null || {
-                        local rpm_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-rpm-x64"
-                        local rpm_path="/tmp/vscode-$$.rpm"
-                        curl -fsSL "$rpm_url" -o "$rpm_path" && sudo dnf install -y "$rpm_path" && rm -f "$rpm_path"
-                    }
-                    ;;
-                pacman)
-                    sudo pacman -S --noconfirm code 2>/dev/null || {
-                        yay -S --noconfirm visual-studio-code-bin 2>/dev/null || \
-                            log_warn "Could not install VSCode. Install manually"
-                    }
-                    ;;
-                *)
-                    log_warn "Unknown package manager. Install VSCode manually."
-                    ;;
-            esac
-            if [[ -x "$(command -v code)" ]]; then
-                log_info "VSCode installed successfully."
-            else
-                log_warn "VSCode installation may need a terminal restart."
-            fi
-        fi
+        install_vscode
     else
         echo -e "  ${GRAY}[VSCode] ${BOLD}OMITIDO${RESET}"
     fi
 
     # --- 8e. Gentleman Guardian Angel (optional) ---
     if [[ "${INSTALL_GGA:-false}" == "true" ]]; then
-        component_status "Gentleman Guardian Angel" "$([[ -d "$HOME/gentleman-guardian-angel" ]] && echo true || echo false)" "true"
-        local gga_status=$?
-        if [[ $gga_status -eq 0 ]]; then
-            log_info "GGA ya instalado."
-            git -C "$HOME/gentleman-guardian-angel" pull --rebase 2>/dev/null || true
-        elif [[ $gga_status -eq 2 ]]; then
-            : # dry-run
-        else
-            if git clone https://github.com/Gentleman-Programming/gentleman-guardian-angel.git "$HOME/gentleman-guardian-angel"; then
-                if [[ -f "$HOME/gentleman-guardian-angel/install.sh" ]]; then
-                    bash "$HOME/gentleman-guardian-angel/install.sh" 2>/dev/null && \
-                        log_info "GGA installed. Run 'gga init' to activate." || \
-                        log_warn "GGA installer had issues."
-                fi
-            else
-                log_error "Failed to clone GGA."
-                rollback_remove_dir "$HOME/gentleman-guardian-angel"
-            fi
-        fi
+        install_gga
     else
         echo -e "  ${GRAY}[GGA] ${BOLD}OMITIDO${RESET}"
     fi
@@ -1158,62 +1242,11 @@ install_components() {
         log_warn "Skipping agent file creation (templates not found)."
     fi
 
-    # --- 8e. GitHub Repositories ---
-    if [[ -n "$GITHUB_USER" ]]; then
-        log_info "Checking GitHub repositories..."
-        for repo in "engram-memories" "opencode-config"; do
-            if gh repo view "$GITHUB_USER/$repo" &>/dev/null; then
-                log_info "Repo exists: $GITHUB_USER/$repo"
-            else
-                log_info "Creating private repo: $GITHUB_USER/$repo ..."
-                gh repo create "$repo" --private --description "Lara Diaries — $repo" || \
-                    log_warn "Could not create $repo. Create it manually at https://github.com/new"
-            fi
-        done
-    else
-        log_warn "No GitHub user configured — skipping repo creation."
-        log_warn "Create repos manually: engram-memories and opencode-config (both private)."
-    fi
+    # --- 8g. GitHub Repositories + Clone ---
+    setup_github_repos
 
-    # --- 8f. Clone repos locally ---
-    if [[ -n "$GITHUB_USER" ]]; then
-        log_info "Cloning repositories..."
-        for repo in "engram-memories" "opencode-config"; do
-            if [[ ! -d "$HOME/$repo" ]]; then
-                if gh repo clone "$GITHUB_USER/$repo" "$HOME/$repo" 2>/dev/null; then
-                    log_info "Cloned: $HOME/$repo"
-                else
-                    log_warn "Could not clone $repo. Creating local directory..."
-                    mkdir -p "$HOME/$repo"
-                    git init "$HOME/$repo"
-                fi
-            else
-                log_info "Already exists: $HOME/$repo"
-            fi
-        done
-    fi
-
-    # --- 8g. First config backup ---
-    log_info "Performing initial config backup..."
-    if [[ -d "$HOME/opencode-config" ]]; then
-        # Copy current config files
-        if [[ -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
-            cp "$OPENCODE_CONFIG_DIR/opencode.json" "$HOME/opencode-config/" 2>/dev/null || true
-        fi
-        if [[ -f "$OPENCODE_CONFIG_DIR/AGENTS.md" ]]; then
-            cp "$OPENCODE_CONFIG_DIR/AGENTS.md" "$HOME/opencode-config/" 2>/dev/null || true
-        fi
-        mkdir -p "$HOME/opencode-config/agents"
-        cp "$OPENCODE_CONFIG_DIR/agents/"*.md "$HOME/opencode-config/agents/" 2>/dev/null || true
-
-        # Commit and push
-        cd "$HOME/opencode-config"
-        if [[ -n "$(git status --porcelain)" ]]; then
-            git add .
-            git commit -m "backup: initial config $(date '+%Y-%m-%d')" 2>/dev/null || true
-            git push 2>/dev/null || log_warn "Could not push initial backup. Will retry on sync."
-        fi
-    fi
+    # --- 8h. First config backup ---
+    backup_initial_config
 
     log_info "Component installation complete!"
 }
