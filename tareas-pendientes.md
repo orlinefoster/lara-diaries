@@ -190,21 +190,14 @@ Si `wizardPath` contiene una comilla simple (e.g., `/home/user/lara's/...`), hay
 **Archivos**: `cmd/lara-installer/install.go`, `modules/wizard-core.sh`
 **Severidad**: HIGH — instalación parcial deja sistema sucio sin undo
 
-Cada paso tiene rollback individual (ej: `rollback_remove_dir`, `rollbackShell`).
-Pero si el paso 3 falla, los pasos 1-2 siguen marcados como `success` en
-`state.json` y sus cambios **no se revierten**. No hay un "undo completo" que
-vuelva al estado pre-instalación.
+Cada paso tenía rollback individual (ej: `rollback_remove_dir`, `rollbackShell`).
+Pero si el paso 3 fallaba, los pasos 1-2 seguían marcados como `success` en
+`state.json` y sus cambios **no se revertían**. No había un "undo completo".
 
-```go
-// install.go: cada step tiene su propio rollback, pero si falla el 3,
-// los steps 1-2 ya se marcaron como success y no se tocan
-```
-
-**Fix**: Implementar `undo_all()` que:
-1. Lea `state.json` y recorra steps en orden inverso
-2. Ejecute el rollback de cada step completado
-3. Elimine `state.json` al final (o marque como `rolled_back`)
-4. Informe al usuario qué se deshizo y qué no
+**Fix (06/2026)**: Implementado rollback completo en ambas fases:
+- **Go binary**: `CompletedSteps()` lee state.json, `rollbackAll()` ejecuta rollbacks en orden inverso. On failure: se revierten TODOS los pasos completados, no solo el fallido.
+- **Shell wizard**: `ROLLBACK_STACK` en memoria registra cada sub-componente instalado. `rollback_stack_all()` los revierte en orden inverso. Sub-funciones (`install_gentle_ai`, etc.) ahora retornan 1 en error para activar la cascada.
+- Tests: `TestRollbackAll_ReverseOrder` verifica orden inverso, `TestCompletedSteps_*` verifican filtrado.
 
 ---
 
@@ -530,7 +523,7 @@ graph TD
 | 13 | Temp file leak | `wizard-core.sh` | 5 min | 🟡 M8 | ✅ |
 | 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
-| 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | 📝 |
+| 16 | Sin rollback global | `install.go`, `wizard-core.sh` | 20 min | 🔴 H4 | ✅ |
 | 17 | doctor self-check incompleto | `doctor.go` | 15 min | 🟡 M9 | 📝 |
 | 18 | Typo `$opcode_generated` en generate_opencode_json | `wizard-core.sh` | 2 min | 🔴 N1 | ✅ |
 | 19 | TestRunHandlers_Execute bypass standaloneRun | `install_test.go` | 15 min | 🔴 N2 | ✅ |
