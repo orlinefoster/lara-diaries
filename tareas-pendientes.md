@@ -208,9 +208,14 @@ Pero si el paso 3 fallaba, los pasos 1-2 seguían marcados como `success` en
 **Archivo**: `modules/wizard-core.sh`
 **Severidad**: MEDIUM
 
-`wizard-core.ps1` tiene `Backup-ExistingConfig` e `Invoke-BackupPrompt` que respaldan `opencode.json`, AGENTS.md, agents, plugins, commands, skills. `wizard-core.sh` no tiene equivalente.
+`wizard-core.ps1` tenía `Backup-ExistingConfig` e `Invoke-BackupPrompt` que respaldan `opencode.json`, AGENTS.md, agents, plugins, commands, skills. `wizard-core.sh` no tenía equivalente.
 
-**Fix**: Implementar backup de configuración existente en `wizard-core.sh`.
+**Fix (06/2026)**: Agregada `backup_config()` en `wizard-core.sh`:
+1. Detecta si existe `$OPENCODE_CONFIG_DIR`
+2. Pregunta al usuario si quiere respaldar (S/N, default S)
+3. Ofrece modo completo o solo agentes
+4. Copia a `backups/opencode-config-<timestamp>/`
+5. Hookeado en `wizard_main` entre "mission" e "install_components"
 
 ---
 
@@ -521,7 +526,7 @@ graph TD
 | 4 | Variables GRAY + PKG_MANAGER | `wizard-core.sh` | 5 min | 🔴 C4 | ✅ |
 | 5 | Cross-platform exec + shell injection | `install.go` | 20 min | 🔴 C5/H3 | ✅ |
 | 6 | wizard_check_only + wizard_dry_run | `wizard-core.sh` | 15 min | 🟡 H2 | ✅ |
-| 7 | Backup step en shell wizard | `wizard-core.sh` | 15 min | 🟡 M1 | ⏳ |
+| 7 | Backup step en shell wizard | `wizard-core.sh` | 15 min | 🟡 M1 | ✅ |
 | 8 | Arch detection en bootstrap.ps1 | `bootstrap.ps1` | 5 min | 🟡 M2 | ✅ |
 | 9 | CI go.sum reference | `release-installer.yml` | 2 min | 🟡 M3 | ✅ |
 | 10 | Documentación faltante design.md | `design.md` | 10 min | 🟡 M4-M5 | ✅ |
