@@ -337,3 +337,43 @@ graph TD
 | 13 | Temp file leak | `wizard-core.sh` | 5 min | 🟡 M8 | ✅ |
 | 14 | Standalone no-ops | `install.go` | 5 min | 🟢 L2 | ✅ |
 | 15 | Tracking accuracy | `tareas-pendientes.md` | 2 min | 🟢 L3-L4 | ✅ |
+
+---
+
+## ⏳ Tareas Deferidas — Resumen
+
+### M1. Backup de configuración existente en shell wizard
+
+**Qué falta**: `wizard-core.ps1` tiene `Backup-ExistingConfig` que respalda `opencode.json`,
+AGENTS.md, agent prompts, plugins y skills antes de instalar. `wizard-core.sh` no tiene
+equivalente — los usuarios Linux/macOS no obtienen backup.
+
+**Por qué se difirió**: Funcionalidad nueva (no un bug). El wizard funciona sin esto, solo
+pierde la red de seguridad de tener configs anteriores respaldadas.
+
+**Qué hacer**: Implementar función `backup_existing_config()` en `wizard-core.sh` que:
+1. Verifique si existe `$OPENCODE_CONFIG_DIR/opencode.json`
+2. Si existe, copie a `$OPENCODE_CONFIG_DIR/opencode.json.bak`
+3. Respalde `$OPENCODE_CONFIG_DIR/agents/` a `$OPENCODE_CONFIG_DIR/agents.bak/`
+4. Registre el backup en state.json como paso `backup`
+
+---
+
+### M7. Generación de `opencode.json` en PowerShell wizard
+
+**Qué falta**: El shell wizard (`wizard-core.sh`) genera `opencode.json` a partir del
+template, reemplazando `{{ENGRAM_PATH}}`, configurando permisos git, e inyectando los
+prompts de los agentes. El PowerShell wizard (`wizard-core.ps1`) solo copia los templates
+de agentes — los usuarios de Windows obtienen `opencode.json` con placeholders literales
+como `{{ENGRAM_PATH}}`.
+
+**Por qué se difirió**: Requiere portar ~60 líneas de lógica de generación JSON de Bash a
+PowerShell, incluyendo la integración con python3 o jq. Windows típicamente no tiene
+python3 preinstalado, así que habría que implementar la generación en PowerShell puro.
+
+**Qué hacer**: Implementar función `New-OpenCodeConfig` en `wizard-core.ps1` que:
+1. Lea `templates/configs/opencode.json`
+2. Reemplace `{{ENGRAM_PATH}}` con `(Get-Command engram).Source`
+3. Configure permisos git según `$REPO_MANAGEMENT`
+4. Inyecte los prompts de lara-plan.md y lara-vip.md
+5. Use `ConvertTo-Json` para serializar correctamente (escape de strings multilinea)
