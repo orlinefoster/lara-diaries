@@ -723,9 +723,9 @@ install_engram() {
         mkdir -p "$engram_tmpdir"
         trap 'rm -rf "$engram_tmpdir"' EXIT
 
-        local engram_latest_url="https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
+        local engram_releases_url="https://api.github.com/repos/Gentleman-Programming/engram/releases"
         local engram_response
-        engram_response="$(curl -sL -w "\n%{http_code}" "$engram_latest_url")"
+        engram_response="$(curl -sL -w "\n%{http_code}" "$engram_releases_url")"
         local engram_http_code
         engram_http_code="$(echo "$engram_response" | tail -n1)"
         local engram_body
@@ -733,7 +733,7 @@ install_engram() {
 
         if [[ "$engram_http_code" == "200" ]]; then
             local engram_tag
-            engram_tag="$(echo "$engram_body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+            engram_tag="$(echo "$engram_body" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[^"]*\)".*/\1/p' | head -1)"
             local engram_version="${engram_tag#v}"
             local engram_os_arch="linux_amd64"
             [[ "$(uname -s)" == "Darwin" ]] && engram_os_arch="darwin_amd64"

@@ -140,8 +140,13 @@ function Invoke-GitHubLogin {
         throw "gh CLI not found"
     }
 
-    $null = & gh auth status 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $null = & gh auth status 2>$null
+    $isAuthed = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $oldEAP
+
+    if ($isAuthed) {
         Write-Success "Ya estas autenticado en GitHub."
     } else {
         Write-Warn "No estas autenticado. Iniciando login..."
@@ -156,12 +161,17 @@ function Invoke-GitHubLogin {
     }
 
     try {
+        $oldEAP = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
         $username = & gh api user --jq .login 2>$null
         if (-not $username -or $LASTEXITCODE -ne 0) {
             $json = & gh api user 2>$null
-            $obj = $json | ConvertFrom-Json
-            $username = $obj.login
+            if ($json) {
+                $obj = $json | ConvertFrom-Json
+                $username = $obj.login
+            }
         }
+        $ErrorActionPreference = $oldEAP
         if ($username) {
             $script:WizardAnswers.GitHubUser = $username.Trim()
             Write-Success "Usuario: $($script:WizardAnswers.GitHubUser)"
@@ -812,8 +822,10 @@ function Install-Components {
             # Priority 1: Download from GitHub Releases (zero deps — just PowerShell)
             Write-Info "Downloading Engram from GitHub Releases..."
             try {
-                $releasesUrl = "https://api.github.com/repos/Gentleman-Programming/engram/releases/latest"
-                $releaseInfo = Invoke-RestMethod -Uri $releasesUrl -ErrorAction Stop
+                $releasesUrl = "https://api.github.com/repos/Gentleman-Programming/engram/releases"
+                $releases = Invoke-RestMethod -Uri $releasesUrl -ErrorAction Stop
+                $releaseInfo = $releases | Where-Object { $_.tag_name -like "v*" } | Select-Object -First 1
+                if (-not $releaseInfo) { throw "No se encontraron releases validos de Engram." }
                 $tag = $releaseInfo.tag_name
                 $version = $tag.TrimStart('v')
 
@@ -886,8 +898,10 @@ function Install-Components {
                 $winget = Get-Command "winget" -ErrorAction SilentlyContinue
                 if ($winget) {
                     $null = & winget install "Microsoft.VisualStudioCode" --accept-source-agreements --accept-package-agreements 2>&1
+                    # Refresh PATH env var to detect new installation without restart
+                    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
                     $reCheck = Get-Command "code" -ErrorAction SilentlyContinue
-                    if (-not $reCheck) { throw "VSCode instalado pero 'code' no esta en PATH." }
+                    if (-not $reCheck) { throw "VSCode instalado pero 'code' no esta en PATH. Por favor reinicia la consola." }
                 } else {
                     throw "winget no disponible. Descarga desde: https://code.visualstudio.com/"
                 }
@@ -963,23 +977,34 @@ function Install-Components {
         $reposToCheck = @("engram-memories", "opencode-config")
         foreach ($repoName in $reposToCheck) {
             Write-Info "Verificando repo: $ghUser/$repoName..."
-            $repoCheck = & gh repo view "$ghUser/$repoName" --json name 2>&1
-            if ($LASTEXITCODE -eq 0) {
+            $oldEAP = $ErrorActionPreference
+            $ErrorActionPreference = "SilentlyContinue"
+            $null = & gh repo view "$ghUser/$repoName" --json name 2>$null
+            $repoExists = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = $oldEAP
+            if ($repoExists) {
                 Write-Success "Repo $repoName ya existe."
             } else {
                 Write-Info "Creando repo privado: $repoName..."
                 try {
-                    $null = & gh repo create "$repoName" --private --clone 2>&1
-                    if ($LASTEXITCODE -eq 0) { Write-Success "Repo $repoName creado." }
+                    $oldEAP = $ErrorActionPreference
+                    $ErrorActionPreference = "SilentlyContinue"
+                    $null = & gh repo create "$repoName" --private --clone 2>$null
+                    $createSuccess = ($LASTEXITCODE -eq 0)
+                    $ErrorActionPreference = $oldEAP
+                    if ($createSuccess) { Write-Success "Repo $repoName creado." }
                     else { Write-ErrorMsg "Error creando repo $repoName."; continue }
                 } catch { Write-ErrorMsg "Error creando repo $($repoName): $_"; continue }
             }
             $localRepo = Join-Path $HOME $repoName
             if (-not (Test-Path -LiteralPath $localRepo)) {
                 try {
-                    Push-Location $HOME
-                    $null = & gh repo clone "$ghUser/$repoName" 2>&1
-                    if ($LASTEXITCODE -eq 0) { Write-Success "Repo clonado en: $localRepo" }
+                    $oldEAP = $ErrorActionPreference
+                    $ErrorActionPreference = "SilentlyContinue"
+                    $null = & gh repo clone "$ghUser/$repoName" 2>$null
+                    $cloneSuccess = ($LASTEXITCODE -eq 0)
+                    $ErrorActionPreference = $oldEAP
+                    if ($cloneSuccess) { Write-Success "Repo clonado en: $localRepo" }
                     Pop-Location
                 } catch { Write-Warn "Error clonando $repoName"; try { Pop-Location } catch {} }
             } else { Write-Info "Repo ya clonado en: $localRepo" }
