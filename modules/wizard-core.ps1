@@ -1,4 +1,4 @@
-# Lara Diaries - Wizard Core (PowerShell)
+﻿# Lara Diaries - Wizard Core (PowerShell)
 # Import: . .\modules\wizard-core.ps1
 #
 # Compatible with Windows PowerShell 5.1 and PowerShell Core 7+.
@@ -416,7 +416,24 @@ function Save-UserProfile {
     }
     $profilePath = Join-Path $profileDir "user-profile.json"
     try {
-        $json = $script:UserProfile | ConvertTo-Json -Compress
+        $profile = [Ordered]@{
+            version          = "1.0.0"
+            created_at       = (Get-Date -Format "o")
+            github_user      = $script:WizardAnswers.GitHubUser
+            dev_directory    = $script:WizardAnswers.DevDir
+            gentle_ai        = ($script:WizardAnswers.InstallGentleAI -eq $true)
+            gentleman_skills = ($script:WizardAnswers.InstallGentlemanSkills -eq $true)
+            vscode           = ($script:WizardAnswers.InstallVSCode -eq $true)
+            gga              = ($script:WizardAnswers.InstallGGA -eq $true)
+            pronouns         = $script:WizardAnswers.Pronoun
+            skill_level      = $script:WizardAnswers.SkillLevel
+            assistance_mode  = $script:WizardAnswers.AssistanceMode
+            repo_management  = $script:WizardAnswers.RepoMode
+            use_design_doc   = ($script:WizardAnswers.UseDesignDoc -ne $false)
+            style            = $script:WizardAnswers.Style
+            mission          = $script:WizardAnswers.Mission
+        }
+        $json = $profile | ConvertTo-Json -Compress
         $json | Set-Content -Path $profilePath -Encoding UTF8 -Force
         Write-Info "Perfil guardado en: $profilePath"
     } catch {
@@ -692,7 +709,7 @@ function Generate-OpencodeJson {
     $config.mcp.engram.command[0] = $engramPath
 
     # Git permission levels from repo management preference
-    $repoMode = $script:WizardAnswers.RepoManagement
+    $repoMode = $script:WizardAnswers.RepoMode
     $gitCommitLevel = "ask"
     $gitPushLevel = "ask"
     switch ($repoMode) {

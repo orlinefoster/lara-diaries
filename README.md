@@ -86,20 +86,20 @@ cd lara-diaries
 
 ### Paso 3: Iniciá la magia
 
-Abrí opencode:
+Ejecutá el script de bootstrap correspondiente a tu sistema operativo para iniciar el asistente interactivo:
+
+**Windows:**
+```powershell
+.\bootstrap\bootstrap.ps1
 ```
-opencode
+
+**Linux / macOS:**
+```bash
+chmod +x bootstrap/bootstrap.sh
+./bootstrap/bootstrap.sh
 ```
 
-Y dentro de opencode, escribí este mensaje:
-
-> **"Baja e inicia este repositorio"**
-
-O si querés ser más específica:
-
-> **"Baja e inicia este repo https://github.com/orlinefoster/lara-diaries"**
-
-Lara va a tomar el control desde ahí. Te va a hacer algunas preguntas (tu nivel de experiencia, preferencias, si ya tenés una configuración previa que respaldar, etc.) y en **5-10 minutos** vas a tener todo configurado.
+El script descargará automáticamente el instalador de Lara Diaries e iniciará un asistente interactivo en tu terminal. Te va a hacer algunas preguntas (tu nivel de experiencia, preferencias de diseño, si querés respaldar una configuración existente, etc.) y en **5-10 minutos** va a tener todo configurado.
 
 ---
 
