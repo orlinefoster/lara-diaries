@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 # Lara Diaries — Memory Sync Script (Linux)
-# Syncs engram memories to GitHub private repo via cron
-# Usage: ./sync-memories.sh
+# Syncs engram memories to GitHub private repo via engram sync
+# Usage: ./sync-memories.sh [project-name]
 set -euo pipefail
 
-# =============================================================================
-# Configuration
-# =============================================================================
 ENGRAM_REPO="$HOME/engram-memories"
-ENGRAM_DATA="$HOME/.local/share/engram"
+LARA_DIRIES="$HOME/lara-diaries"
 LOG_FILE="$HOME/.local/share/lara-diaries/sync.log"
+PROJECT="${1:-lara-diaries}"
 
-# =============================================================================
-# Logging
-# =============================================================================
 log() {
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
@@ -26,52 +21,34 @@ error_exit() {
     exit 1
 }
 
-# =============================================================================
-# Main
-# =============================================================================
 main() {
-    # Step 0: Verify repo exists
     if [[ ! -d "$ENGRAM_REPO/.git" ]]; then
-        error_exit "Engram repo not found at $ENGRAM_REPO. Run bootstrap first."
+        error_exit "Engram repo not found at $ENGRAM_REPO."
     fi
 
-    log "Starting memory sync..."
+    log "Starting memory sync (project: $PROJECT)..."
 
-    # Step 1: Pull latest changes from remote
     cd "$ENGRAM_REPO"
-    if ! git pull --rebase 2>>"$LOG_FILE"; then
-        log "WARNING: git pull --rebase failed. Possible conflicts or network issue."
-        log "Skipping push this cycle to avoid losing local changes."
-        exit 1
-    fi
-    log "Remote changes pulled successfully."
 
-    # Step 2: Copy engram database files into repo
-    if [[ -d "$ENGRAM_DATA" ]]; then
-        local copied=0
-        shopt -s nullglob
-        local db_file
-        for db_file in "$ENGRAM_DATA"/*.db; do
-            cp "$db_file" "$ENGRAM_REPO/"
-            log "Copied: $(basename "$db_file")"
-            ((copied++))
-        done
-        shopt -u nullglob
-        if [[ $copied -eq 0 ]]; then
-            log "No .db files found in $ENGRAM_DATA."
-        fi
+    # Pull latest
+    git pull --rebase 2>>"$LOG_FILE" || log "WARNING: git pull failed, continuing..."
+
+    # Export memories via engram sync (creates/updates .engram/ directory)
+    if command -v engram &>/dev/null; then
+        log "Running: engram sync --project $PROJECT"
+        engram sync --project "$PROJECT" 2>>"$LOG_FILE" || log "WARNING: engram sync had issues"
     else
-        log "No engram data directory at $ENGRAM_DATA — skipping file copy."
+        log "engram not found, skipping."
     fi
 
-    # Step 3: Commit and push if there are changes
+    # Commit and push if there are changes
     if [[ -n "$(git status --porcelain)" ]]; then
         git add .
         git commit -m "sync: memories $(date '+%Y-%m-%d %H:%M')"
         log "Changes committed locally."
 
         if ! git push 2>>"$LOG_FILE"; then
-            log "WARNING: git push failed. Changes are committed locally and will be pushed on next cycle."
+            log "WARNING: git push failed. Will retry next cycle."
             exit 1
         fi
         log "Sync complete: changes pushed to remote."
