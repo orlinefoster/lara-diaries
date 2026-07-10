@@ -48,7 +48,7 @@ MISSION=""
 INSTALL_GENTLE_AI=""
 INSTALL_SKILLS=""
 INSTALL_VSCODE=""
-INSTALL_GGA=""
+
 DEV_DIR=""
 GITHUB_USER=""
 OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
@@ -161,21 +161,6 @@ gentle_ai_prompt() {
             ;;
     esac
 
-    # Gentleman Guardian Angel (optional code review tool)
-    echo ""
-    local gga_resp
-    echo -n "¿Instalar Gentleman Guardian Angel? (revisión automática de código, s/N): "
-    read -r gga_resp
-    case "${gga_resp,,}" in
-        s|si|y|yes)
-            INSTALL_GGA="true"
-            log_info "Gentleman Guardian Angel will be installed."
-            ;;
-        *)
-            INSTALL_GGA="false"
-            log_info "GGA skipped (can be installed later)."
-            ;;
-    esac
 }
 
 # =============================================================================
@@ -460,10 +445,6 @@ register_vscode_rollback() {
     # VSCode extensions rollback is handled per-extension
     # No directory to remove
     :
-}
-
-register_gga_rollback() {
-    push_rollback_dir "$HOME/gentleman-guardian-angel"
 }
 
 register_github_repos_rollback() {
@@ -1077,31 +1058,6 @@ install_vscode() {
 }
 
 # =============================================================================
-# install_gga — install Gentleman Guardian Angel (optional)
-# =============================================================================
-install_gga() {
-    component_status "Gentleman Guardian Angel" "$([[ -d "$HOME/gentleman-guardian-angel" ]] && echo true || echo false)" "true"
-    local gga_status=$?
-    if [[ $gga_status -eq 0 ]]; then
-        log_info "GGA ya instalado."
-        git -C "$HOME/gentleman-guardian-angel" pull --rebase 2>/dev/null || true
-    elif [[ $gga_status -eq 2 ]]; then
-        : # dry-run
-    else
-        if git clone https://github.com/Gentleman-Programming/gentleman-guardian-angel.git "$HOME/gentleman-guardian-angel"; then
-            if [[ -f "$HOME/gentleman-guardian-angel/install.sh" ]]; then
-                bash "$HOME/gentleman-guardian-angel/install.sh" 2>/dev/null && \
-                    log_info "GGA installed. Run 'gga init' to activate." || \
-                    log_warn "GGA installer had issues."
-            fi
-        else
-            log_error "Failed to clone GGA."
-            rollback_remove_dir "$HOME/gentleman-guardian-angel"
-        fi
-    fi
-}
-
-# =============================================================================
 # setup_github_repos — create and clone GitHub repos for engram and config
 # =============================================================================
 setup_github_repos() {
@@ -1415,18 +1371,7 @@ install_components() {
         echo -e "  ${GRAY}[VSCode] ${BOLD}OMITIDO${RESET}"
     fi
 
-    # --- 8e. Gentleman Guardian Angel (optional) ---
-    if [[ "${INSTALL_GGA:-false}" == "true" ]]; then
-        if install_gga; then
-            register_gga_rollback
-        else
-            log_warn "GGA installation had issues. Continuing anyway."
-        fi
-    else
-        echo -e "  ${GRAY}[GGA] ${BOLD}OMITIDO${RESET}"
-    fi
-
-    # --- 8f. Create Lara Agents from templates ---
+    # --- 8e. Create Lara Agents from templates ---
     if [[ -n "$templates_dir" ]]; then
         copy_agent_templates "$templates_dir"
         generate_opencode_json "$templates_dir"
@@ -1543,7 +1488,6 @@ show_summary() {
     printf "%-28s %s\n" "Gentle AI"         "$INSTALL_GENTLE_AI"
     printf "%-28s %s\n" "Gentleman Skills"  "${INSTALL_SKILLS:-false}"
     printf "%-28s %s\n" "VSCode"            "${INSTALL_VSCODE:-false}"
-    printf "%-28s %s\n" "GGA (code review)" "${INSTALL_GGA:-false}"
     printf "%-28s %s\n" "Pronouns"          "${PRONOUN:-(from existing profile)}"
     printf "%-28s %s\n" "Skill Level"       "${SKILL_LEVEL:-(from existing profile)}"
     printf "%-28s %s\n" "Assistance Mode"   "${ASSISTANCE_MODE:-(from existing profile)}"
@@ -1671,7 +1615,6 @@ save_user_profile() {
   "gentle_ai": ${INSTALL_GENTLE_AI:-false},
   "gentleman_skills": ${INSTALL_SKILLS:-false},
   "vscode": ${INSTALL_VSCODE:-false},
-  "gga": ${INSTALL_GGA:-false},
   "pronouns": "$PRONOUN",
   "skill_level": "$SKILL_LEVEL",
   "assistance_mode": "$ASSISTANCE_MODE",
@@ -1784,8 +1727,6 @@ wizard_noninteractive() {
     INSTALL_GENTLE_AI="$(get_json_val "install_gentle_ai" "true")"
     INSTALL_SKILLS="$(get_json_val "install_gentleman_skills" "true")"
     INSTALL_VSCODE="$(get_json_val "install_vscode" "true")"
-    INSTALL_GGA="$(get_json_val "install_gga" "false")"
-
     DEV_DIR="$(get_json_val "dev_dir" "$HOME/Documents/Develops")"
     mkdir -p "$DEV_DIR"
 
@@ -1876,7 +1817,6 @@ run_go_step() {
         INSTALL_GENTLE_AI="$(echo "$json_config" | get_json_val "install_gentle_ai" "true")"
         INSTALL_SKILLS="$(echo "$json_config" | get_json_val "install_gentleman_skills" "true")"
         INSTALL_VSCODE="$(echo "$json_config" | get_json_val "install_vscode" "true")"
-        INSTALL_GGA="$(echo "$json_config" | get_json_val "install_gga" "false")"
         DEV_DIR="$(echo "$json_config" | get_json_val "dev_dir" "$HOME/Documents/Develops")"
     fi
 

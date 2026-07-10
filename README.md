@@ -16,7 +16,6 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 | **Lara-VIP** | Ejecuta tareas, arregla errores, sincroniza todo — con supervisión de seguridad |
 | **Engram** | Memoria persistente — Lara se acuerda de vos entre sesiones y dispositivos |
 | **Sync automático** | Cada 30 minutos tus memorias se sincronizan a un repo privado de GitHub |
-| **Guardian** | Lara te avisa antes de hacer algo peligroso (borrar archivos, tocar el router, etc.) |
 | **Config backup** | Tu configuración de agentes respaldada automáticamente |
 
 ---

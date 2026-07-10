@@ -29,7 +29,7 @@ flowchart TD
     dev_dir --> comp_sel["Que instalar?
     - Gentle AI and Skills
     - VSCode
-    - Guardian Angel"]:::prompt
+    - VSCode"]:::prompt
 
     %% ===== 4. BACKUP =====
     comp_sel --> backup_check{Config opencode
@@ -67,20 +67,12 @@ flowchart TD
     engram_install --> vscode_q
 
     vscode_q{"Instalar VSCode?"}
-    vscode_q -- No --> gga_q
+    vscode_q -- No --> templates
     vscode_q -- Si --> vscode_check{Ya instalado?}:::check
     vscode_check -- Si --> vscode_skip[Skip]:::skip
     vscode_check -- No --> vscode_do[Instalar VSCode apt/dnf]:::install
-    vscode_skip --> gga_q
-    vscode_do --> gga_q
-
-    gga_q:::check --> gga_ask{"Instalar Guardian Angel?"}
-    gga_ask -- No --> templates
-    gga_ask -- Si --> gga_check_inst{Ya instalado?}:::check
-    gga_check_inst -- Si --> gga_skip[Skip]:::skip
-    gga_check_inst -- No --> gga_do[Instalar GGA]:::install
-    gga_skip --> templates
-    gga_do --> templates
+    vscode_skip --> templates
+    vscode_do --> templates
 
     templates["Copiar templates de agente
     y generar opencode.json"]:::install

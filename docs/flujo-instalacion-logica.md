@@ -12,7 +12,6 @@ Cada componente se verifica antes de instalar. Si ya existe, se salta:
 | Engram | `command -v engram` / `Get-Command engram` |
 | Gentleman Skills | `~/.config/opencode/skills/gentleman-skills/` |
 | VSCode | `command -v code` / `Get-Command code` |
-| GGA | `command -v guardian` / `Get-Command guardian` |
 | Repos GitHub | `gh repo view $USER/$repo` |
 
 ### 2. Orden inmodificable
@@ -21,7 +20,7 @@ Cada componente se verifica antes de instalar. Si ya existe, se salta:
 LO MÍNIMO PARA INSTALAR:
   1. GitHub Login
   2. Directorio de desarrollo
-  3. Qué componentes instalar (Gentle AI, Skills, VSCode, GGA)
+  3. Qué componentes instalar (Gentle AI, Skills, VSCode)
   4. Backup de config existente (si aplica)
 
 INSTALACIÓN:

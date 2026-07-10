@@ -230,7 +230,6 @@ Ask each YES/NO separately:
 - "¿Querés instalar **Gentle AI**? (sistema de orquestación de agentes)"
 - "¿Y los **Gentleman Skills**? (skills para code review, testing, etc.)"
 - "¿Querés **VSCode**? (editor de código, recomendado para principiantes)"  
-- "¿Querés **Gentleman Guardian Angel**? (revisión automática de código en cada commit — opcional avanzado)"
 
 ### 3.4 Preferences
 
@@ -254,7 +253,6 @@ Include ALL answers collected. The config JSON grows based on what was detected:
   "install_gentle_ai": true,
   "install_gentleman_skills": true,
   "install_vscode": true,
-  "install_gga": false,
   "repo_mode": "auto",
   "use_design_doc": true,
   "style": "clean-ui",
@@ -277,7 +275,6 @@ For fresh installs, omit backup fields:
   "install_gentle_ai": true,
   "install_gentleman_skills": true,
   "install_vscode": true,
-  "install_gga": false,
   "repo_mode": "auto",
   "use_design_doc": true,
   "style": "clean-ui",

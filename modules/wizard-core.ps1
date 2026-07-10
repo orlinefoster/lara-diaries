@@ -259,14 +259,6 @@ function Invoke-GentleAIPrompt {
     else { Write-Info "VSCode omitido" }
     $script:UserProfile.InstallVSCode = $val3
 
-    # Gentleman Guardian Angel (optional code review tool)
-    $installGGA = Read-Host "  Instalar Gentleman Guardian Angel? (revision automatica de codigo, s/N, predeterminado: N)"
-    $val4 = ($installGGA -like "S*" -or $installGGA -like "s*")
-    $script:WizardAnswers.InstallGGA = $val4
-    if ($val4) { Write-Success "Gentleman Guardian Angel incluido" }
-    else { Write-Info "Gentleman Guardian Angel omitido (se puede instalar despues)" }
-    $script:UserProfile.InstallGGA = $val4
-
     Save-UserProfile
 }
 
@@ -530,7 +522,6 @@ function Save-UserProfile {
             gentle_ai        = ($script:WizardAnswers.InstallGentleAI -eq $true)
             gentleman_skills = ($script:WizardAnswers.InstallGentlemanSkills -eq $true)
             vscode           = ($script:WizardAnswers.InstallVSCode -eq $true)
-            gga              = ($script:WizardAnswers.InstallGGA -eq $true)
             pronouns         = $script:WizardAnswers.Pronoun
             skill_level      = $script:WizardAnswers.SkillLevel
             assistance_mode  = $script:WizardAnswers.AssistanceMode
@@ -1004,29 +995,6 @@ function Install-Components {
         Write-Status -Component "VSCode" -Status "OMITIDO"
     }
 
-    # Gentleman Guardian Angel (optional)
-    if ($script:WizardAnswers.InstallGGA) {
-        $ggaDir = Join-Path $HOME "gentleman-guardian-angel"
-        $null = Install-Component -Name "Gentleman Guardian Angel" -Optional `
-            -CheckBlock { Test-Path -LiteralPath $ggaDir } `
-            -InstallBlock {
-                $null = & git clone "https://github.com/Gentleman-Programming/gentleman-guardian-angel.git" $ggaDir 2>&1
-                if ($LASTEXITCODE -ne 0) { throw "Error clonando GGA" }
-                $ggaInstall = Join-Path $ggaDir "install.ps1"
-                if (Test-Path -LiteralPath $ggaInstall) {
-                    $null = & $ggaInstall 2>&1
-                } else {
-                    $ggaSh = Join-Path $ggaDir "install.sh"
-                    if (Test-Path -LiteralPath $ggaSh) {
-                        $null = & "bash" $ggaSh 2>&1
-                    }
-                }
-                Write-Success "GGA instalado. Para activarlo: gga init en tu proyecto."
-            }
-    } else {
-        Write-Status -Component "Gentleman Guardian Angel" -Status "OMITIDO"
-    }
-
     # Create agents from templates
     $restoreAgents = $script:WizardAnswers.RestoreAgents
     if ($restoreAgents -eq "keep") {
@@ -1174,7 +1142,7 @@ function Install-Components {
             try {
                 $null = & gentle-ai install --agents opencode --scope global --sdd-mode multi 2>&1
                 if ($LASTEXITCODE -eq 0) {
-                    Write-Success "Gentle AI integrado con opencode (rosa, SDD, skills, GGA)"
+                    Write-Success "Gentle AI integrado con opencode (rosa, SDD, skills)"
                 } else {
                     Write-Warn "gentle-ai install reporto exit code: $LASTEXITCODE"
                 }
@@ -1286,13 +1254,8 @@ function Show-Summary {
     Write-Host "  [x] Sync programado" -ForegroundColor Green
 
     $vscode = $script:WizardAnswers.InstallVSCode
-    $gga = $script:WizardAnswers.InstallGGA
-
     if ($vscode) { Write-Host "  [x] VSCode" -ForegroundColor Green }
     else { Write-Host "  [ ] VSCode" -ForegroundColor Gray }
-
-    if ($gga) { Write-Host "  [x] Gentleman Guardian Angel" -ForegroundColor Green }
-    else { Write-Host "  [ ] Gentleman Guardian Angel" -ForegroundColor Gray }
 
     if ($c3) { Write-Host "  [x] design.md" -ForegroundColor Green }
     else { Write-Host "  [ ] design.md" -ForegroundColor Gray }
@@ -1563,7 +1526,6 @@ function Start-NonInteractiveWizard {
         InstallGentleAI        = if ($config.install_gentle_ai -eq $false) { $false } else { $true }
         InstallGentlemanSkills = if ($config.install_gentleman_skills -eq $false) { $false } else { $true }
         InstallVSCode          = if ($config.install_vscode -eq $false) { $false } else { $true }
-        InstallGGA             = if ($config.install_gga -eq $true) { $true } else { $false }
         RestoreAgents          = $restoreAgents
         InstallType            = $installType
     }
