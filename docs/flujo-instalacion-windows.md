@@ -2,37 +2,29 @@
 
 ```mermaid
 flowchart TD
-    %% ===== ESTILOS =====
-    classDef prompt fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000
-    classDef check fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef install fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
-    classDef repo fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
-    classDef sync fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#000
-    classDef personal fill:#fce4ec,stroke:#c62828,stroke-width:2px,color:#000
-    classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
-    classDef skip fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,color:#666
-    classDef error fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000
+    classDef prompt fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef check fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef install fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef repo fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef sync fill:#fff8e1,stroke:#f9a825,stroke-width:2px
+    classDef personal fill:#fce4ec,stroke:#c62828,stroke-width:2px
+    classDef skip fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px
+    classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 
-    %% ===== INICIO =====
     start([Inicio]) --> gh_login
 
-    %% ===== 1. GITHUB =====
     gh_login["GitHub Login"]:::prompt
     gh_login --> gh_check{gh auth valido?}:::check
     gh_check -- Si --> gh_ok[Autenticado]:::done
     gh_check -- No --> gh_auth[gh auth login]:::install
     gh_auth --> gh_ok
 
-    %% ===== 2. DEV DIR =====
     gh_ok --> dev_dir["Directorio de desarrollo"]:::prompt
 
-    %% ===== 3. COMPONENT SELECTION (solo lo necesario para instalar) =====
     dev_dir --> comp_sel["Que instalar?
-    - Gentle AI and Skills
-    - VSCode
-    - VSCode"]:::prompt
+    Gentle AI and Skills
+    VSCode"]:::prompt
 
-    %% ===== 4. BACKUP =====
     comp_sel --> backup_check{Config opencode
     existe en APPDATA?}:::check
     backup_check -- Si --> backup_prompt["Respaldar config existente?"]:::prompt
@@ -42,7 +34,6 @@ flowchart TD
     backup_do --> install_phase
     skip_backup --> install_phase
 
-    %% ===== 5. INSTALL PHASE =====
     install_phase:::install --> ga_check{Gentle AI
     instalado?}:::check
 
@@ -78,7 +69,6 @@ flowchart TD
     templates["Copiar templates de agente
     y generar opencode.json"]:::install
 
-    %% ===== 6. REPO PHASE =====
     templates --> repo_phase:::repo
 
     repo_phase --> repo_engram_check{Repo
@@ -106,7 +96,6 @@ flowchart TD
     repo_opencode_pull --> sync_phase
     repo_opencode_clone --> sync_phase
 
-    %% ===== 7. SYNC PHASE =====
     sync_phase:::sync --> sync_setup["Configurar Scheduled Tasks
     cada 30 min"]:::sync
     sync_setup --> sync_engram[Ejecutar sync.ps1
@@ -114,13 +103,11 @@ flowchart TD
     sync_engram --> sync_config[Ejecutar
     sync-opencode-config.ps1]:::sync
 
-    %% ===== 8. VERIFY =====
     sync_config --> verify["Verificar instalacion:
-    - Engram en PATH?
-    - Scheduled Tasks activos?
-    - Repos clonados?"]:::check
+    Engram en PATH?
+    Scheduled Tasks activos?
+    Repos clonados?"]:::check
 
-    %% ===== 9. ALL CONFIG QUESTIONS AT THE END =====
     verify --> check_profile{Perfil de Lara
     ya guardado en
     opencode-config?}:::check
@@ -145,19 +132,6 @@ flowchart TD
     personal_skip --> summary
     save_profile --> summary
 
-    %% ===== 10. SUMMARY =====
     summary["Mostrar resumen final"]:::done
     summary --> done([Instalacion completa]):::done
-
-    %% ===== LEGEND =====
-    subgraph Legend
-        direction LR
-        L1:::prompt
-        L2:::install
-        L3:::check
-        L4:::repo
-        L5:::sync
-        L6:::personal
-        L7:::done
-    end
 ```
