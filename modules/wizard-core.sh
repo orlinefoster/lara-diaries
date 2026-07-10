@@ -874,9 +874,6 @@ generate_opencode_json() {
 
     log_info "Generating opencode.json configuration..."
 
-    local engram_path
-    engram_path="$(command -v engram || echo "engram")"
-
     # Map repo management to permission levels
     local git_commit_level="ask"
     local git_push_level="ask"
@@ -904,7 +901,6 @@ generate_opencode_json() {
 
     # Method 1: python3 — full JSON manipulation (escaping, structure, multi-line)
     if command -v python3 &>/dev/null; then
-        ENGRAM_BIN="$engram_path" \
         GIT_COMMIT="$git_commit_level" \
         GIT_PUSH="$git_push_level" \
         LARA_PLAN_PROMPT="${lara_plan_prompt}" \
@@ -914,10 +910,6 @@ import json, os
 
 with open('$templates_dir/configs/opencode.json') as f:
     data = json.load(f)
-
-# MCP engram command path
-if os.environ.get('ENGRAM_BIN'):
-    data['mcp']['engram']['command'][0] = os.environ['ENGRAM_BIN']
 
 # Git permission levels
 git_commit = os.environ.get('GIT_COMMIT', 'ask')
@@ -943,11 +935,9 @@ with open('$opencode_output', 'w') as f:
     # Method 2: jq — for simple value replacements (no multi-line prompt support)
     if [[ "$opencode_generated" != "true" ]] && command -v jq &>/dev/null; then
         jq \
-            --arg engram "$engram_path" \
             --arg git_commit "$git_commit_level" \
             --arg git_push "$git_push_level" \
-            '.mcp.engram.command[0] = $engram
-             | .permission.bash."git commit *" = $git_commit
+            '.permission.bash."git commit *" = $git_commit
              | .permission.bash."git push" = $git_push
              | .permission.bash."git push *" = $git_push
              | del(.agent."gentle-orchestrator")
@@ -1137,6 +1127,12 @@ setup_github_repos() {
         if [[ ! -d "$HOME/$repo" ]]; then
             if gh repo clone "$GITHUB_USER/$repo" "$HOME/$repo" 2>/dev/null; then
                 log_info "Cloned: $HOME/$repo"
+                # Copy engram-memories .gitignore template if present
+                if [[ "$repo" == "engram-memories" && -f "$templates_dir/engram/gitignore" && ! -f "$HOME/$repo/.gitignore" ]]; then
+                    cp "$templates_dir/engram/gitignore" "$HOME/$repo/.gitignore"
+                    (cd "$HOME/$repo" && git add .gitignore && git commit -m "init: add .gitignore for sync chunks" && git push 2>/dev/null) || true
+                    log_info "  → .gitignore template applied"
+                fi
             else
                 log_warn "Could not clone $repo. Creating local directory..."
                 mkdir -p "$HOME/$repo"
