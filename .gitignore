@@ -40,6 +40,9 @@ bootstrap/*.msi
 engram-memories/
 opencode-config/
 
+# ── Auto-generated skill registry (machine-local paths) ─
+.atl/
+
 # ── User Config (generated) ─────────────────
 user-profile.json
 
