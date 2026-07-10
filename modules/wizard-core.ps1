@@ -1299,8 +1299,8 @@ function Invoke-PostInstallVerification {
     Write-Host "`n  Tambien quiero repreguntarte algunas cosas" -ForegroundColor White
     Write-Host "  para ajustar bien a tu perfil.`n" -ForegroundColor White
 
-    # ── Re-preguntas de reconocimiento ─────
-    $reask = Read-Host "  Queres configurar tus preferencias ahora? (S/N, predeterminado: S)"
+    # ── Re-preguntas de reconocimiento (solo si el usuario lo pide explícitamente) ─────
+    $reask = Read-Host "  Queres configurar tus preferencias ahora? (s/N, predeterminado: N)"
     if ($reask -eq "" -or $reask -like "S*" -or $reask -like "s*") {
         # Re-ask pronouns
         Write-Host "`n  1. Que pronombres usas?" -ForegroundColor White
@@ -1659,6 +1659,206 @@ function Start-Wizard {
         Write-Warn "Podes volver a ejecutar el wizard cuando quieras."
         Write-Host ""
         throw
+    }
+}
+
+# ── GO BINARY STEP BRIDGE ─────────────────
+# Called by lara-installer.exe on Windows for each install step.
+# Mirrors run_go_step from wizard-core.sh.
+
+function Run-GoStep {
+    param(
+        [string]$StepName,
+        [string]$ConfigJson = $null
+    )
+
+    # Parse JSON config into WizardAnswers if provided
+    if ($ConfigJson) {
+        try {
+            $config = $ConfigJson | ConvertFrom-Json
+        } catch {
+            Write-ErrorMsg "Invalid JSON config in Run-GoStep"
+            return $false
+        }
+        $script:WizardAnswers.GitHubUser = (gh api user --jq .login 2>$null)
+        $script:WizardAnswers.DevDir = if ($config.dev_dir) { $config.dev_dir } else { Join-Path $HOME "Documents\Develops" }
+        $script:WizardAnswers.Pronoun = if ($config.pronoun) { $config.pronoun } else { "they/them" }
+        $script:WizardAnswers.SkillLevel = if ($config.skill_level) { $config.skill_level } else { "me-defiendo" }
+        $script:WizardAnswers.AssistanceMode = if ($config.assistance_mode) { $config.assistance_mode } else { "medium" }
+        $script:WizardAnswers.RepoMode = if ($config.repo_mode) { $config.repo_mode } else { "auto" }
+        $script:WizardAnswers.UseDesignDoc = if ($config.use_design_doc -eq $false) { $false } else { $true }
+        $script:WizardAnswers.Style = if ($config.style) { $config.style } else { "clean-ui" }
+        $script:WizardAnswers.Mission = if ($config.mission) { $config.mission } else { "personal-important" }
+        $script:WizardAnswers.InstallGentleAI = if ($config.install_gentle_ai -eq $false) { $false } else { $true }
+        $script:WizardAnswers.InstallGentlemanSkills = if ($config.install_gentleman_skills -eq $false) { $false } else { $true }
+        $script:WizardAnswers.InstallVSCode = if ($config.install_vscode -eq $false) { $false } else { $true }
+        $discretion = switch ($script:WizardAnswers.Mission) {
+            "personal-important" { "high-caution" }
+            "work"               { "moderate" }
+            "vm"                 { "relaxed" }
+            "lab-raspberry"      { "very-relaxed" }
+            default              { "moderate" }
+        }
+        $script:WizardAnswers.Discretion = $discretion
+        $script:UserProfile.Pronoun = $script:WizardAnswers.Pronoun
+        $script:UserProfile.SkillLevel = $script:WizardAnswers.SkillLevel
+        $script:UserProfile.AssistanceMode = $script:WizardAnswers.AssistanceMode
+        $script:UserProfile.Mission = $script:WizardAnswers.Mission
+        $script:UserProfile.Discretion = $discretion
+    }
+
+    switch ($StepName) {
+        "github_login" {
+            $null = & gh auth status 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $user = & gh api user --jq .login 2>$null
+                Write-Success "GitHub authenticated as: $user"
+                return $true
+            }
+            Write-ErrorMsg "GitHub not authenticated. Run: gh auth login"
+            return $false
+        }
+
+        "clone_gentle_ai" {
+            $gaDir = Join-Path $HOME "gentle-ai"
+            if (Test-Path -LiteralPath $gaDir) {
+                Write-Info "gentle-ai already cloned."
+                return $true
+            }
+            Write-Info "Cloning Gentle AI..."
+            $null = & git clone "https://github.com/Gentleman-Programming/gentle-ai.git" $gaDir 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "gentle-ai cloned."
+                return $true
+            }
+            Write-ErrorMsg "Failed to clone gentle-ai."
+            return $false
+        }
+
+        "setup_gentleman_skills" {
+            $skillsDir = Join-Path (Get-OpencodeConfigDir) "skills\gentleman-skills"
+            if (Test-Path -LiteralPath $skillsDir) {
+                Write-Info "Gentleman Skills already installed."
+                return $true
+            }
+            Write-Info "Installing Gentleman Skills..."
+            $parent = Split-Path $skillsDir -Parent
+            if (-not (Test-Path -LiteralPath $parent)) {
+                $null = New-Item -ItemType Directory -Path $parent -Force
+            }
+            $null = & git clone "https://github.com/Gentleman-Programming/Gentleman-Skills.git" $skillsDir 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Gentleman Skills installed."
+                return $true
+            }
+            Write-ErrorMsg "Failed to install Gentleman Skills."
+            return $false
+        }
+
+        "setup_engram" {
+            $engramBin = Get-Command "engram" -ErrorAction SilentlyContinue
+            if ($engramBin) {
+                Write-Info "Engram already installed."
+                return $true
+            }
+            Write-Info "Installing Engram..."
+            # Delegate to wizard-core's Install-Component for Engram (lines 901-976)
+            $ok = Install-Component -Name "Engram" `
+                -CheckBlock { Get-Command "engram" -ErrorAction SilentlyContinue } `
+                -InstallBlock {
+                    # Binary download from GitHub Releases
+                    $releasesUrl = "https://api.github.com/repos/Gentleman-Programming/engram/releases"
+                    $releases = Invoke-RestMethod -Uri $releasesUrl -ErrorAction Stop
+                    $releaseInfo = $releases | Where-Object { $_.tag_name -like "v*" } | Select-Object -First 1
+                    $tag = $releaseInfo.tag_name
+                    $version = $tag.TrimStart('v')
+                    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { "arm64" } else { "amd64" }
+                    $archiveName = "engram_${version}_windows_${arch}.zip"
+                    $dlUrl = "https://github.com/Gentleman-Programming/engram/releases/download/${tag}/${archiveName}"
+                    $tmpDir = Join-Path $env:TEMP "engram-install-$([System.IO.Path]::GetRandomFileName())"
+                    $null = New-Item -ItemType Directory -Path $tmpDir -Force
+                    $zipPath = Join-Path $tmpDir $archiveName
+                    Invoke-WebRequest -Uri $dlUrl -OutFile $zipPath -ErrorAction Stop
+                    Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
+                    $installBinDir = Join-Path $HOME "bin"
+                    if (-not (Test-Path -LiteralPath $installBinDir)) {
+                        $null = New-Item -ItemType Directory -Path $installBinDir -Force
+                    }
+                    Copy-Item -Path (Join-Path $tmpDir "engram.exe") -Destination (Join-Path $installBinDir "engram.exe") -Force
+                    Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Success "Engram installed to: $(Join-Path $installBinDir 'engram.exe')"
+                }
+            if ($ok) { return $true }
+            Write-ErrorMsg "Engram installation failed."
+            return $false
+        }
+
+        "setup_opencode" {
+            Write-Info "Configuring opencode..."
+            $configDir = Get-OpencodeConfigDir
+            $agentsDir = Join-Path $configDir "agents"
+            if (-not (Test-Path -LiteralPath $agentsDir)) {
+                $null = New-Item -ItemType Directory -Path $agentsDir -Force
+            }
+            Generate-OpencodeJson
+            Write-Success "opencode configured."
+            return $true
+        }
+
+        "setup_vscode" {
+            $codeBin = Get-Command "code" -ErrorAction SilentlyContinue
+            if (-not $codeBin) {
+                Write-Warn "VSCode not found — skipping extension setup."
+                return $true
+            }
+            if ($script:WizardAnswers.InstallVSCode -eq $false) {
+                Write-Info "VSCode setup skipped by user preference."
+                return $true
+            }
+            Write-Info "Installing VSCode extensions..."
+            $extensions = @(
+                "bierner.markdown-mermaid",
+                "yzhang.markdown-all-in-one",
+                "opencode.opencode-vscode"
+            )
+            $installed = 0
+            foreach ($ext in $extensions) {
+                $null = & $codeBin.Source --install-extension $ext --force 2>&1
+                if ($LASTEXITCODE -eq 0) { $installed++ }
+            }
+            Write-Success "VSCode extensions: $installed/$($extensions.Count) installed."
+            return $true
+        }
+
+        "setup_repo_management" {
+            Write-Info "Repo management: $($script:WizardAnswers.RepoMode)"
+            return $true
+        }
+
+        "setup_design" {
+            Write-Info "Design doc: $($script:WizardAnswers.UseDesignDoc), Style: $($script:WizardAnswers.Style)"
+            return $true
+        }
+
+        "setup_mission" {
+            Write-Info "Mission: $($script:WizardAnswers.Mission)"
+            return $true
+        }
+
+        "setup_recognition" {
+            Write-Info "Pronouns: $($script:WizardAnswers.Pronoun), Skill: $($script:WizardAnswers.SkillLevel), Assistance: $($script:WizardAnswers.AssistanceMode)"
+            return $true
+        }
+
+        "setup_save_profile" {
+            Save-UserProfile
+            return $true
+        }
+
+        default {
+            Write-ErrorMsg "Unknown step: $StepName"
+            return $false
+        }
     }
 }
 

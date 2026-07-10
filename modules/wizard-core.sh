@@ -1939,6 +1939,38 @@ run_go_step() {
             return 0
             ;;
 
+        setup_repo_management)
+            REPO_MANAGEMENT="${REPO_MANAGEMENT:-$(get_json_val "repo_mode" "auto")}"
+            log_info "Repo management: $REPO_MANAGEMENT"
+            return 0
+            ;;
+
+        setup_design)
+            USE_DESIGN_DOC="${USE_DESIGN_DOC:-$(get_json_val "use_design_doc" "true")}"
+            STYLE="${STYLE:-$(get_json_val "style" "clean-ui")}"
+            log_info "Design doc: $USE_DESIGN_DOC, Style: $STYLE"
+            return 0
+            ;;
+
+        setup_mission)
+            MISSION="${MISSION:-$(get_json_val "mission" "personal-important")}"
+            log_info "Mission: $MISSION"
+            return 0
+            ;;
+
+        setup_recognition)
+            PRONOUN="${PRONOUN:-$(get_json_val "pronoun" "they/them")}"
+            SKILL_LEVEL="${SKILL_LEVEL:-$(get_json_val "skill_level" "me-defiendo")}"
+            ASSISTANCE_MODE="${ASSISTANCE_MODE:-$(get_json_val "assistance_mode" "medium")}"
+            log_info "Pronouns: $PRONOUN, Skill: $SKILL_LEVEL, Assistance: $ASSISTANCE_MODE"
+            return 0
+            ;;
+
+        setup_save_profile)
+            save_user_profile
+            return $?
+            ;;
+
         *)
             log_error "Unknown step: $step_name"
             return 1

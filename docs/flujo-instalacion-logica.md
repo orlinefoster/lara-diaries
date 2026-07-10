@@ -26,7 +26,7 @@ LO MÍNIMO PARA INSTALAR:
 INSTALACIÓN:
   5. Instalar componentes (verificando cada uno antes)
   6. Repos: crear/clonar engram-memories + opencode-config
-  7. Sync: configurar automatización + sync inicial
+   7. Sync: configurar cron (Linux) / Scheduled Tasks (Windows) + sync inicial
   8. Verificar que todo funciona
 
 TODO AL FINAL — SOLO SI NUNCA SE CONFIGURÓ:

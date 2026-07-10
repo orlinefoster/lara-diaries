@@ -403,30 +403,31 @@ Usage: .\bootstrap.ps1 [--check|--dry-run|--non-interactive <json>|install|docto
     }
 
     # ---- MAIN ----
-    # Flags not supported by Go binary yet → skip to fallback
+    # On Windows, the Go binary is primarily useful for doctor/check mode
+    # (doesn't need wizard-core.sh for that). Install-mode always uses
+    # the PowerShell wizard directly (bootstrap.ps1 is the proper entry point).
+
+    $binaryPath = Get-BinaryPath
+    $binaryAvailable = Test-Path -LiteralPath $binaryPath
+
+    # doctor and --check → use Go binary if available, otherwise PS fallback
+    if ($goArgs -contains "doctor") {
+        if ($binaryAvailable) {
+            Write-Host "[OK] Running lara-installer doctor..." -ForegroundColor Green
+            & $binaryPath doctor
+            exit $LASTEXITCODE
+        }
+        Write-Host "[!] lara-installer binary not found." -ForegroundColor Yellow
+        Write-Host "  Download from: https://github.com/orlinefoster/lara-diaries/releases" -ForegroundColor Yellow
+        exit 1
+    }
+
+    # --check and --dry-run → shell fallback (status report)
     if ($checkOnly -or $dryRun -or $nonInteractive) {
         Start-FallbackWizard -NonInteractive $nonInteractive -CheckOnly:$checkOnly -DryRun:$dryRun
         exit $LASTEXITCODE
     }
 
-    $binaryPath = Get-BinaryPath
-
-    if (Test-Path -LiteralPath $binaryPath) {
-        Write-Host "[OK] lara-installer binary found. Running..." -ForegroundColor Green
-        & $binaryPath @goArgs
-        exit $LASTEXITCODE
-    }
-
-    # Binary not found: attempt download
-    Write-Host "[..] lara-installer not found at $binaryPath" -ForegroundColor Yellow
-    $installed = Install-Binary
-
-    if (-not $installed) {
-        Start-FallbackWizard
-        exit $LASTEXITCODE
-    }
-
-    # Run the freshly installed binary
-    & $binaryPath @goArgs
-    exit $LASTEXITCODE
+    # Interactive install: use PowerShell wizard directly
+    Start-FallbackWizard
 }

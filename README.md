@@ -30,6 +30,8 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 
 **No necesitás saber programar.** Si llegaste hasta acá, ya está.
 
+> 💡 **Actualmente opencode incluye su propio Node.js**, no hace falta instalarlo por separado.
+
 ### Dependencias que instala Lara automáticamente
 
 | Componente | Método principal (zero deps) | Alternativas (si tenés más herramientas) |
@@ -49,12 +51,12 @@ Todo lo que necesitás para empezar es **una terminal, 10 minutos y ganas de pro
 
 ### Paso 1: Instalá las herramientas necesarias
 
-> opencode es el "motor" que hace funcionar a Lara. Además necesita `git`, `gh` (GitHub CLI) y `node` (Node.js).
+> opencode es el "motor" que hace funcionar a Lara. Además necesita `git` y `gh` (GitHub CLI).
 
 **Windows:**
 Abrí PowerShell como Administrador y ejecutá:
 ```powershell
-winget install OpenCode Git.Git GitHub.cli OpenJS.NodeJS.LTS
+winget install SST.opencode Git.Git GitHub.cli
 ```
 
 > Si algún `winget install` falla, instalalo manualmente desde la web.
@@ -62,13 +64,13 @@ winget install OpenCode Git.Git GitHub.cli OpenJS.NodeJS.LTS
 **Linux (Ubuntu/Debian):**
 ```bash
 sudo apt update
-sudo apt install git gh nodejs curl -y
+sudo apt install git gh curl -y
 curl -fsSL https://opencode.ai/install | bash
 ```
 
 **Linux (Fedora):**
 ```bash
-sudo dnf install git gh nodejs curl -y
+sudo dnf install git gh curl -y
 curl -fsSL https://opencode.ai/install | bash
 ```
 
