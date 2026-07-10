@@ -713,11 +713,6 @@ function Generate-OpencodeJson {
         return
     }
 
-    # Engram binary path
-    $engramPath = (Get-Command "engram" -ErrorAction SilentlyContinue).Source
-    if (-not $engramPath) { $engramPath = "engram" }
-    $config.mcp.engram.command[0] = $engramPath
-
     # Git permission levels from repo management preference
     $repoMode = $script:WizardAnswers.RepoMode
     $gitCommitLevel = "ask"
@@ -1004,7 +999,24 @@ function Install-Components {
                     $null = & gh repo clone "$ghUser/$repoName" 2>$null
                     $cloneSuccess = ($LASTEXITCODE -eq 0)
                     $ErrorActionPreference = $oldEAP
-                    if ($cloneSuccess) { Write-Success "Repo clonado en: $localRepo" }
+                    if ($cloneSuccess) {
+                        Write-Success "Repo clonado en: $localRepo"
+                        # Copy engram-memories .gitignore template if present
+                        if ($repoName -eq "engram-memories") {
+                            $gitignoreTemplate = Join-Path $PSScriptRoot "..\templates\engram\gitignore"
+                            try { $gitignoreTemplate = (Resolve-Path $gitignoreTemplate -ErrorAction Stop).Path } catch { $gitignoreTemplate = $null }
+                            $gitignoreDest = Join-Path $localRepo ".gitignore"
+                            if ($gitignoreTemplate -and (Test-Path -LiteralPath $gitignoreTemplate) -and -not (Test-Path -LiteralPath $gitignoreDest)) {
+                                Copy-Item -Path $gitignoreTemplate -Destination $gitignoreDest -Force
+                                Push-Location $localRepo
+                                $null = & git add .gitignore 2>&1
+                                $null = & git commit -m "init: add .gitignore for sync chunks" 2>&1
+                                $null = & git push 2>&1
+                                Pop-Location
+                                Write-Success ".gitignore template applied"
+                            }
+                        }
+                    }
                     Pop-Location
                 } catch { Write-Warn "Error clonando $repoName"; try { Pop-Location } catch {} }
             } else { Write-Info "Repo ya clonado en: $localRepo" }

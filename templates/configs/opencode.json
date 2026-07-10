@@ -61,6 +61,7 @@
     },
     "gentle-orchestrator": {
       "description": "Gentle AI SDD Orchestrator — coordinates sub-agents",
+      "hidden": true,
       "mode": "primary",
       "permission": {
         "question": "allow",
@@ -212,7 +213,7 @@
   "mcp": {
     "engram": {
       "type": "local",
-      "command": ["{{ENGRAM_PATH}}", "mcp", "--tools=agent"]
+      "command": ["engram", "mcp", "--tools=agent"]
     }
   },
   "permission": {
