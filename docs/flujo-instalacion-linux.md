@@ -2,14 +2,14 @@
 
 ```mermaid
 flowchart TD
-    classDef prompt fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
-    classDef check fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef install fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef repo fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef sync fill:#fff8e1,stroke:#f9a825,stroke-width:2px
-    classDef personal fill:#fce4ec,stroke:#c62828,stroke-width:2px
-    classDef skip fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px
-    classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef prompt fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#000
+    classDef check fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef install fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef repo fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
+    classDef sync fill:#fff8e1,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef personal fill:#fce4ec,stroke:#c62828,stroke-width:2px,color:#000
+    classDef skip fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,color:#666
+    classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
 
     start([Inicio]) --> gh_login
 
