@@ -106,9 +106,10 @@ $script:ProgressSteps = @(
     "Backup de config existente",
     "Instalacion",
     "Sincronizacion",
-    "Resumen final"
+    "Resumen final",
+    "Verificacion post-instalacion"
 )
-$script:ProgressTotal = 11
+$script:ProgressTotal = 12
 
 function Set-Progress {
     param([int]$Step, [string]$Status = "...")
@@ -127,6 +128,22 @@ function Read-HostOrDefault {
     $input = Read-Host "  $Prompt"
     if ([string]::IsNullOrWhiteSpace($input)) { return $Default }
     return $input.Trim()
+}
+
+# ── CROSS-PLATFORM CONFIG PATH ────────────────
+function Get-OpencodeConfigDir {
+    <#
+    .SYNOPSIS
+        Returns the cross-platform opencode config directory.
+        opencode 1.17+ uses ~/.config/opencode/ on ALL platforms (including Windows).
+    .EXAMPLE
+        $dir = Get-OpencodeConfigDir
+    #>
+    if ($env:XDG_CONFIG_HOME) {
+        return Join-Path $env:XDG_CONFIG_HOME "opencode"
+    }
+    # opencode 1.17+ uses ~/.config/opencode/ even on Windows
+    return Join-Path $HOME ".config/opencode"
 }
 
 # ── 1. GITHUB LOGIN ──────────────────────────
@@ -726,24 +743,12 @@ function Generate-OpencodeJson {
     $config.permission.bash."git push" = $gitPushLevel
     $config.permission.bash."git push *" = $gitPushLevel
 
-    # Agent prompts
-    $agentsDir = Join-Path $env:APPDATA "opencode\agents"
-    $planPromptFile = Join-Path $agentsDir "lara-plan.md"
-    $vipPromptFile = Join-Path $agentsDir "lara-vip.md"
-    if (Test-Path -LiteralPath $planPromptFile) {
-        $planPrompt = Get-Content -Path $planPromptFile -Raw -Encoding UTF8
-        $config.agent."lara-plan".prompt = $planPrompt
-    }
-    if (Test-Path -LiteralPath $vipPromptFile) {
-        $vipPrompt = Get-Content -Path $vipPromptFile -Raw -Encoding UTF8
-        $config.agent."lara-vip".prompt = $vipPrompt
-    }
+    # Agent prompts — use {file:...} references instead of inline content
+    # The template should already have {file:./agents/lara-plan.md}
+    # Just ensure the agents are in the right directory
 
-    # Remove gentle-orchestrator (template placeholder only)
-    $config.agent.PSObject.Properties.Remove("gentle-orchestrator")
-
-    # Write output
-    $configDir = Join-Path $env:APPDATA "opencode"
+    # Write output to cross-platform config dir
+    $configDir = Get-OpencodeConfigDir
     if (-not (Test-Path -LiteralPath $configDir)) {
         $null = New-Item -ItemType Directory -Path $configDir -Force
     }
@@ -761,8 +766,9 @@ function Install-Components {
         Write-Host "  [DRY-RUN] No se instalara nada. Reportando estado actual...`n" -ForegroundColor Cyan
     }
 
-    $opencodeSkillsDir = Join-Path $env:APPDATA "opencode\skills"
-    $opencodeAgentsDir = Join-Path $env:APPDATA "opencode\agents"
+    $opencodeConfigDir = Get-OpencodeConfigDir
+    $opencodeSkillsDir = Join-Path $opencodeConfigDir "skills"
+    $opencodeAgentsDir = Join-Path $opencodeConfigDir "agents"
 
     # Gentle AI
     if ($script:WizardAnswers.InstallGentleAI) {
@@ -1034,9 +1040,10 @@ function Install-Components {
         Write-Info "Ejecutando primer backup..."
         try {
             Push-Location $configRepoDir
-            $opencodeConfig = Join-Path $env:APPDATA "opencode\opencode.json"
-            $agentsMd = Join-Path $env:APPDATA "opencode\AGENTS.md"
-            $agentsDir = Join-Path $env:APPDATA "opencode\agents"
+            $opencodeConfigDir = Get-OpencodeConfigDir
+            $opencodeConfig = Join-Path $opencodeConfigDir "opencode.json"
+            $agentsMd = Join-Path $opencodeConfigDir "AGENTS.md"
+            $agentsDir = Join-Path $opencodeConfigDir "agents"
             if (Test-Path -LiteralPath $opencodeConfig) {
                 Copy-Item -Path $opencodeConfig -Destination (Join-Path $configRepoDir "opencode.json") -Force
             }
@@ -1064,6 +1071,44 @@ function Install-Components {
         } catch {
             Write-Warn "Error en primer backup: $_"
             try { Pop-Location } catch {} }
+    }
+
+    # ── Gentle AI post-install ────────────────────────────────
+    if ($script:WizardAnswers.InstallGentleAI) {
+        $gaBin = Get-Command "gentle-ai" -ErrorAction SilentlyContinue
+        if ($gaBin) {
+            Write-Step "Registrando Gentle AI en opencode..."
+            try {
+                $null = & gentle-ai install --agents opencode --scope global --sdd-mode multi 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Gentle AI integrado con opencode (rosa, SDD, skills, GGA)"
+                } else {
+                    Write-Warn "gentle-ai install reporto exit code: $LASTEXITCODE"
+                }
+            } catch {
+                Write-Warn "gentle-ai install fallo: $_"
+                Write-Info "Podes ejecutarlo manualmente: gentle-ai install --agents opencode --scope global --sdd-mode multi"
+            }
+        } else {
+            Write-Warn "gentle-ai binario no encontrado en PATH. Ejecuta el install script primero."
+        }
+    }
+
+    # ── Engram serve (background) ─────────────────────────────
+    $engramBin = Get-Command "engram" -ErrorAction SilentlyContinue
+    if ($engramBin) {
+        $engramServe = Get-Process -Name "engram" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*serve*" }
+        if (-not $engramServe) {
+            Write-Info "Iniciando engram serve en segundo plano..."
+            try {
+                $null = Start-Process -FilePath $engramBin.Source -ArgumentList "serve" -WindowStyle Hidden -PassThru
+                Write-Success "engram serve iniciado (PID: $($engramServe.Id))"
+            } catch {
+                Write-Warn "No se pudo iniciar engram serve: $_"
+            }
+        } else {
+            Write-Success "engram serve ya esta corriendo (PID: $($engramServe.Id))"
+        }
     }
 }
 
@@ -1167,7 +1212,7 @@ function Show-Summary {
 
     Write-Host "`n  [Directorios]" -ForegroundColor Magenta
     Write-Host "  Proyectos : $($script:WizardAnswers.DevDir)" -ForegroundColor White
-    Write-Host "  Agentes   : $(Join-Path $env:APPDATA 'opencode\agents')" -ForegroundColor White
+    Write-Host "  Agentes   : $(Join-Path (Get-OpencodeConfigDir) 'agents')" -ForegroundColor White
     Write-Host "  Sync      : $(Join-Path $HOME 'lara-sync\sync-memories.ps1')" -ForegroundColor White
     Write-Host "  Memoria   : $(Join-Path $env:LOCALAPPDATA 'engram')" -ForegroundColor White
 
@@ -1178,6 +1223,164 @@ function Show-Summary {
     Write-Host "| Ya podes abrir opencode y empezar a usar     |" -ForegroundColor Green
     Write-Host "| Lara. Tus agentes estan configurados y la    |" -ForegroundColor Green
     Write-Host "| memoria sincroniza cada 30 minutos.          |" -ForegroundColor Green
+    Write-Host "+---------------------------------------------+" -ForegroundColor Green
+    Write-Host "`n"
+}
+
+# ── 12. POST-INSTALL VERIFICATION ────────────
+function Invoke-PostInstallVerification {
+    Write-Step "Paso 12/12 - Verificacion post-instalacion"
+    Set-Progress -Step 11 -Status "Verificando instalacion..."
+
+    Write-Host "`n  =============================================" -ForegroundColor Yellow
+    Write-Host "  |   VERIFICACION POST-INSTALACION            |" -ForegroundColor Yellow
+    Write-Host "  =============================================" -ForegroundColor Yellow
+    Write-Host "`n  Para que todo funcione correctamente, necesito" -ForegroundColor White
+    Write-Host "  que cierres esta terminal y abras una NUEVA." -ForegroundColor White
+    Write-Host "  (Esto actualiza el PATH con los binarios nuevos)" -ForegroundColor Gray
+    Write-Host "`n  Despues de reiniciar, ejecuta este comando:" -ForegroundColor Cyan
+    Write-Host "    lara-diaries doctor" -ForegroundColor Green
+    Write-Host "`n  Tambien quiero repreguntarte algunas cosas" -ForegroundColor White
+    Write-Host "  para ajustar bien a tu perfil.`n" -ForegroundColor White
+
+    # ── Re-preguntas de reconocimiento ─────
+    $reask = Read-Host "  Queres configurar tus preferencias ahora? (S/N, predeterminado: S)"
+    if ($reask -eq "" -or $reask -like "S*" -or $reask -like "s*") {
+        # Re-ask pronouns
+        Write-Host "`n  1. Que pronombres usas?" -ForegroundColor White
+        Write-Host "     1) she/her" -ForegroundColor Gray
+        Write-Host "     2) they/them" -ForegroundColor Gray
+        Write-Host "     3) he/him" -ForegroundColor Gray
+        Write-Host "     4) it/its" -ForegroundColor Gray
+        Write-Host "     5) other" -ForegroundColor Gray
+        $choice = Read-Host "  Opcion (1-5, predeterminado: 2)"
+        if ([string]::IsNullOrWhiteSpace($choice)) { $choice = "2" }
+        switch ($choice.Trim()) {
+            "1" { $script:WizardAnswers.Pronoun = "she/her" }
+            "2" { $script:WizardAnswers.Pronoun = "they/them" }
+            "3" { $script:WizardAnswers.Pronoun = "he/him" }
+            "4" { $script:WizardAnswers.Pronoun = "it/its" }
+            "5" {
+                $custom = Read-Host "    Decime cual"
+                if ([string]::IsNullOrWhiteSpace($custom)) { $custom = "they/them" }
+                $script:WizardAnswers.Pronoun = $custom.Trim()
+            }
+            default { $script:WizardAnswers.Pronoun = "they/them" }
+        }
+        Write-Success "Pronombres: $($script:WizardAnswers.Pronoun)"
+
+        # Re-ask skill level
+        Write-Host "`n  2. Cuanto sabes de informatica?" -ForegroundColor White
+        Write-Host "     1) full-fearless" -ForegroundColor Gray
+        Write-Host "     2) me-defiendo" -ForegroundColor Gray
+        Write-Host "     3) me-invito-un-amigo" -ForegroundColor Gray
+        $choice2 = Read-Host "  Opcion (1-3, predeterminado: 2)"
+        if ([string]::IsNullOrWhiteSpace($choice2)) { $choice2 = "2" }
+        switch ($choice2.Trim()) {
+            "1" { $script:WizardAnswers.SkillLevel = "full-fearless" }
+            "2" { $script:WizardAnswers.SkillLevel = "me-defiendo" }
+            "3" { $script:WizardAnswers.SkillLevel = "me-invito-un-amigo" }
+            default { $script:WizardAnswers.SkillLevel = "me-defiendo" }
+        }
+        Write-Success "Nivel: $($script:WizardAnswers.SkillLevel)"
+        $desc = $script:WizardAnswers.SkillLevel
+        if ($desc -eq "full-fearless") { $script:WizardAnswers.SkillLevelDesc = "Assume competence, focus on trade-offs" }
+        elseif ($desc -eq "me-defiendo") { $script:WizardAnswers.SkillLevelDesc = "Explain the why behind each decision" }
+        else { $script:WizardAnswers.SkillLevelDesc = "Start from basics, be gentle" }
+
+        # Re-ask assistance mode
+        Write-Host "`n  3. Cuanta asistencia queres?" -ForegroundColor White
+        Write-Host "     1) full (explica todo)" -ForegroundColor Gray
+        Write-Host "     2) medium (resume y chequea)" -ForegroundColor Gray
+        Write-Host "     3) minimal (confianza)" -ForegroundColor Gray
+        $choice3 = Read-Host "  Opcion (1-3, predeterminado: 2)"
+        if ([string]::IsNullOrWhiteSpace($choice3)) { $choice3 = "2" }
+        switch ($choice3.Trim()) {
+            "1" { $script:WizardAnswers.AssistanceMode = "full" }
+            "2" { $script:WizardAnswers.AssistanceMode = "medium" }
+            "3" { $script:WizardAnswers.AssistanceMode = "minimal" }
+            default { $script:WizardAnswers.AssistanceMode = "medium" }
+        }
+        Write-Success "Asistencia: $($script:WizardAnswers.AssistanceMode)"
+
+        # Save updated profile
+        $script:UserProfile.Pronoun = $script:WizardAnswers.Pronoun
+        $script:UserProfile.SkillLevel = $script:WizardAnswers.SkillLevel
+        $script:UserProfile.SkillLevelDesc = $script:WizardAnswers.SkillLevelDesc
+        $script:UserProfile.AssistanceMode = $script:WizardAnswers.AssistanceMode
+        Save-UserProfile
+
+        # Re-generate agent files with updated preferences
+        Write-Host "`n  Actualizando agentes con tus preferencias..." -ForegroundColor Cyan
+        $configDir = Get-OpencodeConfigDir
+        $agentsDir = Join-Path $configDir "agents"
+        if (Test-Path -LiteralPath $agentsDir) {
+            $templatesDir = Join-Path $PSScriptRoot "..\templates\agents"
+            try { $templatesDir = (Resolve-Path $templatesDir -ErrorAction Stop).Path } catch { }
+            $agentTemplates = @("lara-plan.md", "lara-vip.md")
+            foreach ($agent in $agentTemplates) {
+                $templatePath = Join-Path $templatesDir $agent
+                $outputPath = Join-Path $agentsDir $agent
+                if (-not (Test-Path -LiteralPath $templatePath)) {
+                    Write-Warn "Template no encontrado: $templatePath"
+                    continue
+                }
+                try {
+                    $content = Get-Content -Path $templatePath -Raw -Encoding UTF8
+                    $content = $content -replace [regex]::Escape("{{PRONOUN}}"), $script:WizardAnswers.Pronoun
+                    $content = $content -replace [regex]::Escape("{{SKILL_LEVEL}}"), $script:WizardAnswers.SkillLevel
+                    $content = $content -replace [regex]::Escape("{{ASSISTANCE_MODE}}"), $script:WizardAnswers.AssistanceMode
+                    $content = $content -replace [regex]::Escape("{{DISCRETION}}"), $script:WizardAnswers.Discretion
+                    $content = $content -replace [regex]::Escape("{{STYLE}}"), $script:WizardAnswers.Style
+                    $content = $content -replace [regex]::Escape("{skill_level_description}"), $script:WizardAnswers.SkillLevelDesc
+                    $content | Set-Content -Path $outputPath -Encoding UTF8 -Force
+                    Write-Success "Agente actualizado: $outputPath"
+                } catch {
+                    Write-Warn "Error actualizando agente $($agent): $_"
+                }
+            }
+        }
+        Write-Success "Preferencias actualizadas."
+    } else {
+        Write-Info "Podes cambiar tus preferencias despues editando los templates de agentes."
+    }
+
+    # ── Run health checks ─────────────────────
+    Write-Host "`n  Ejecutando chequeos de salud..." -ForegroundColor Cyan
+
+    $checks = @(
+        @{Name = "opencode"; Command = { Get-Command "opencode" -ErrorAction SilentlyContinue } }
+        @{Name = "gentle-ai"; Command = { Get-Command "gentle-ai" -ErrorAction SilentlyContinue } }
+        @{Name = "engram"; Command = { Get-Command "engram" -ErrorAction SilentlyContinue } }
+        @{Name = "gh (GitHub CLI)"; Command = { Get-Command "gh" -ErrorAction SilentlyContinue } }
+        @{Name = "git"; Command = { Get-Command "git" -ErrorAction SilentlyContinue } }
+    )
+
+    $allOk = $true
+    foreach ($check in $checks) {
+        $found = & $check.Command
+        if ($found) {
+            Write-Host "    [OK] $($check.Name)" -ForegroundColor Green
+        } else {
+            Write-Host "    [..] $($check.Name) — se vera al reiniciar terminal" -ForegroundColor Yellow
+            $allOk = $false
+        }
+    }
+
+    # ── Final message ─────────────────────────
+    Write-Host "`n"
+    Write-Host "+---------------------------------------------+" -ForegroundColor Green
+    Write-Host "|         LARA DIARIES — INSTALACION COMPLETA  |" -ForegroundColor Green
+    Write-Host "+---------------------------------------------+" -ForegroundColor Green
+    Write-Host "|                                            |" -ForegroundColor Green
+    Write-Host "|  1. Cerra esta terminal                     |" -ForegroundColor White
+    Write-Host "|  2. Abri una NUEVA terminal                 |" -ForegroundColor White
+    Write-Host "|  3. Ejecuta: opencode                       |" -ForegroundColor Green
+    Write-Host "|     (vas a ver la ROSA de gentle-ai)        |" -ForegroundColor White
+    Write-Host "|                                            |" -ForegroundColor Green
+    Write-Host "|  Verificacion rapida:                       |" -ForegroundColor White
+    Write-Host "|    lara-diaries doctor                      |" -ForegroundColor Green
+    Write-Host "|                                            |" -ForegroundColor Green
     Write-Host "+---------------------------------------------+" -ForegroundColor Green
     Write-Host "`n"
 }
@@ -1293,6 +1496,10 @@ function Start-NonInteractiveWizard {
 
     Write-Host "`n  [4/4] Mostrando resumen..." -ForegroundColor Cyan
     Show-Summary
+
+    Write-Host "`n  [5/5] Verificacion post-instalacion (salteada en modo no interactivo)..." -ForegroundColor Cyan
+    Write-Host "  Para verificar, ejecuta: lara-diaries doctor" -ForegroundColor Yellow
+    Write-Host "  Para reconfigurar preferencias, ejecuta: .\bootstrap.ps1" -ForegroundColor Yellow
 }
 
 # ── MAIN WIZARD ORCHESTRATOR ──────────────────
@@ -1372,6 +1579,10 @@ function Start-Wizard {
         Run-Step -Name "show_summary" -Action {
             Set-Progress -Step 10 -Status "Resumen..."
             Show-Summary
+        }
+        Run-Step -Name "post_install_verification" -Action {
+            Set-Progress -Step 11 -Status "Verificacion..."
+            Invoke-PostInstallVerification
         }
 
         Write-Progress -Activity "Lara Diaries" -Completed
