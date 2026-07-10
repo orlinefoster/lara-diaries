@@ -61,6 +61,7 @@
     },
     "gentle-orchestrator": {
       "description": "Gentle AI SDD Orchestrator — coordinates sub-agents",
+      "hidden": true,
       "mode": "primary",
       "permission": {
         "question": "allow",
