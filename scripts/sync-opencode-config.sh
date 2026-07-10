@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Lara Diaries — OpenCode Config Sync Script (Linux)
-# Backs up ~/.config/opencode/ to opencode-config GitHub repo
+# Commits and pushes changes from the opencode config directory
+# The config dir (~/.config/opencode/) IS the git repo.
 # Usage: ./sync-opencode-config.sh
 set -euo pipefail
 
-CONFIG_REPO="$HOME/opencode-config"
 OPENCODE_CONFIG="$HOME/.config/opencode"
 LOG_FILE="$HOME/.local/share/lara-diaries/sync-opencode.log"
 
@@ -21,29 +21,21 @@ error_exit() {
 }
 
 main() {
-    if [[ ! -d "$CONFIG_REPO/.git" ]]; then
-        error_exit "Config repo not found at $CONFIG_REPO."
-    fi
-    if [[ ! -d "$OPENCODE_CONFIG" ]]; then
-        error_exit "OpenCode config not found at $OPENCODE_CONFIG."
+    if [[ ! -d "$OPENCODE_CONFIG/.git" ]]; then
+        error_exit "Config directory is not a git repository at $OPENCODE_CONFIG."
     fi
 
     log "Starting opencode config sync..."
 
-    cd "$CONFIG_REPO"
+    cd "$OPENCODE_CONFIG"
 
-    # Pull latest
-    git pull --rebase 2>>"$LOG_FILE" || log "WARNING: git pull failed, continuing..."
+    # Pull latest from remote (merge, don't rebase — config is shared)
+    git pull 2>>"$LOG_FILE" || log "WARNING: git pull failed, continuing..."
 
-    # Copy config files (exclude node_modules, .git, and large dirs)
-    rsync -a --delete \
-        --exclude='node_modules/' \
-        --exclude='.git/' \
-        --exclude='package-lock.json' \
-        "$OPENCODE_CONFIG/" ./config/
+    # Stage all changes (respects .gitignore: excludes node_modules, lock files)
+    git add -A 2>>"$LOG_FILE" || true
 
-    if [[ -n "$(git status --porcelain)" ]]; then
-        git add .
+    if ! git diff --cached --quiet 2>/dev/null; then
         git commit -m "sync: opencode config $(date '+%Y-%m-%d %H:%M')"
         log "Changes committed locally."
 
