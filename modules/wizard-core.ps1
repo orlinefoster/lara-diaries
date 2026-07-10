@@ -713,11 +713,6 @@ function Generate-OpencodeJson {
         return
     }
 
-    # Engram binary path
-    $engramPath = (Get-Command "engram" -ErrorAction SilentlyContinue).Source
-    if (-not $engramPath) { $engramPath = "engram" }
-    $config.mcp.engram.command[0] = $engramPath
-
     # Git permission levels from repo management preference
     $repoMode = $script:WizardAnswers.RepoMode
     $gitCommitLevel = "ask"
