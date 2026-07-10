@@ -1644,38 +1644,32 @@ function Start-Wizard {
             Set-Progress -Step 2 -Status "Gentle AI..."
             Invoke-GentleAIPrompt
         }
-        Run-Step -Name "repo_management" -Action {
-            Set-Progress -Step 3 -Status "Repos..."
-            Invoke-RepoManagementPrompt
-        }
-        Run-Step -Name "design_orientation" -Action {
-            Set-Progress -Step 4 -Status "Disenio..."
-            Invoke-DesignOrientationPrompt
-        }
-        Run-Step -Name "mission" -Action {
-            Set-Progress -Step 5 -Status "Mision..."
-            Invoke-MissionPrompt
-        }
         Run-Step -Name "backup" -Action {
-            Set-Progress -Step 6 -Status "Backup..."
+            Set-Progress -Step 3 -Status "Backup..."
             Invoke-BackupPrompt
         }
         Run-Step -Name "install_components" -Action {
-            Set-Progress -Step 7 -Status "Instalando..."
+            Set-Progress -Step 4 -Status "Instalando..."
             Install-Components
         }
         Run-Step -Name "setup_sync" -Action {
-            Set-Progress -Step 8 -Status "Sincronizacion..."
+            Set-Progress -Step 5 -Status "Sincronizacion..."
             Setup-Sync
         }
         Run-Step -Name "verify_install" -Action {
-            Set-Progress -Step 9 -Status "Verificacion..."
+            Set-Progress -Step 6 -Status "Verificacion..."
             Invoke-VerifyInstallation
         }
-        Run-Step -Name "recognition_questions" -Action {
+        Run-Step -Name "config_questions" -Action {
             if (Test-UserProfileExists) {
-                Write-Host "  [SKIP] Perfil ya existe — saltando personalizacion." -ForegroundColor DarkYellow
+                Write-Host "  [SKIP] Perfil ya existe — saltando configuracion." -ForegroundColor DarkYellow
             } else {
+                Set-Progress -Step 7 -Status "Repos..."
+                Invoke-RepoManagementPrompt
+                Set-Progress -Step 8 -Status "Disenio..."
+                Invoke-DesignOrientationPrompt
+                Set-Progress -Step 9 -Status "Mision..."
+                Invoke-MissionPrompt
                 Set-Progress -Step 10 -Status "Preferencias..."
                 Invoke-RecognitionQuestions
                 Save-UserProfile

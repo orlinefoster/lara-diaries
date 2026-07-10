@@ -1832,20 +1832,20 @@ wizard_main() {
     wizard_run_step "github_login"       "GitHub Login"             github_login
     wizard_run_step "dev_directory"      "Developer Directory"      dev_directory_prompt
     wizard_run_step "gentle_ai"          "Gentle AI"                gentle_ai_prompt
-    wizard_run_step "repo_management"    "Repo Management"          repo_management_prompt
-    wizard_run_step "design_orientation" "Design & Style"           design_orientation_prompt
-    wizard_run_step "mission"            "Mission"                  mission_prompt
     wizard_run_step "backup"             "Backup Config"            backup_config
     wizard_run_step "install_components" "Install Components"       install_components
     wizard_run_step "setup_sync"         "Setup Sync"               setup_sync
     wizard_run_step "verify_install"     "Post-Install Verification" verify_installation
 
-    # Personalization at the very end — only if never configured before
+    # All configuration questions at the very end — only if never configured before
     if has_user_profile; then
-        log_info "Lara profile already configured — skipping personalization."
+        log_info "Lara profile already configured — skipping configuration questions."
     else
-        wizard_run_step "recognition"    "Recognition Questions"    recognition_questions
-        wizard_run_step "save_profile"   "Save Profile"             save_user_profile
+        wizard_run_step "repo_management"    "Repo Management"          repo_management_prompt
+        wizard_run_step "design_orientation" "Design & Style"           design_orientation_prompt
+        wizard_run_step "mission"            "Mission"                  mission_prompt
+        wizard_run_step "recognition"        "Recognition Questions"    recognition_questions
+        wizard_run_step "save_profile"       "Save Profile"             save_user_profile
     fi
 
     wizard_run_step "show_summary"       "Show Summary"             show_summary

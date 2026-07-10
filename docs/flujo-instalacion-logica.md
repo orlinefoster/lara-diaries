@@ -18,15 +18,29 @@ Cada componente se verifica antes de instalar. Si ya existe, se salta:
 ### 2. Orden inmodificable
 
 ```
-1. PREGUNTAS (configuración del usuario: modo repos, estilo, misión, qué instalar)
-2. INSTALAR (todo lo que haga falta)
-3. REPOS (clonar o crear si no existen)
-4. SYNC (configurar automatización + sync inicial)
-5. VERIFICAR (que todo funcione: engram, timers, repos)
-6. PERSONALIZACIÓN — SOLO SI NUNCA SE CONFIGURÓ
-   └── ¿Ya existe perfil guardado en opencode-config?
-        ├── Sí → ⏭️ saltar, no preguntar nada
-        └── No → preguntar pronombres, nivel, asistencia
+LO MÍNIMO PARA INSTALAR:
+  1. GitHub Login
+  2. Directorio de desarrollo
+  3. Qué componentes instalar (Gentle AI, Skills, VSCode, GGA)
+  4. Backup de config existente (si aplica)
+
+INSTALACIÓN:
+  5. Instalar componentes (verificando cada uno antes)
+  6. Repos: crear/clonar engram-memories + opencode-config
+  7. Sync: configurar automatización + sync inicial
+  8. Verificar que todo funciona
+
+TODO AL FINAL — SOLO SI NUNCA SE CONFIGURÓ:
+  9. ¿Ya existe perfil guardado en opencode-config?
+       ├── Sí → ⏭️ saltar TODO, no preguntar nada
+       └── No → preguntar en orden:
+             a. Modo repos (Auto/Ask/Manual)
+             b. Estilo y Design Doc
+             c. Tipo de PC (misión)
+             d. Pronombres
+             e. Nivel de informática
+             f. Modo de asistencia
+           → Guardar perfil + sincronizar a opencode-config
 ```
 
 ### 3. Repos: primero verificar, después crear o clonar
