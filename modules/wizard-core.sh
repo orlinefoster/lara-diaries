@@ -1127,6 +1127,12 @@ setup_github_repos() {
         if [[ ! -d "$HOME/$repo" ]]; then
             if gh repo clone "$GITHUB_USER/$repo" "$HOME/$repo" 2>/dev/null; then
                 log_info "Cloned: $HOME/$repo"
+                # Copy engram-memories .gitignore template if present
+                if [[ "$repo" == "engram-memories" && -f "$templates_dir/engram/gitignore" && ! -f "$HOME/$repo/.gitignore" ]]; then
+                    cp "$templates_dir/engram/gitignore" "$HOME/$repo/.gitignore"
+                    (cd "$HOME/$repo" && git add .gitignore && git commit -m "init: add .gitignore for sync chunks" && git push 2>/dev/null) || true
+                    log_info "  → .gitignore template applied"
+                fi
             else
                 log_warn "Could not clone $repo. Creating local directory..."
                 mkdir -p "$HOME/$repo"
