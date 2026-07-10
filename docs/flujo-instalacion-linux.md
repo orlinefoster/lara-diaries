@@ -10,6 +10,7 @@ flowchart TD
     classDef personal fill:#fce4ec,stroke:#c62828,stroke-width:2px,color:#000
     classDef skip fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,color:#666
     classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef note fill:#eceff1,stroke:#90a4ae,stroke-width:1px,color:#555
 
     start([Inicio]) --> gh_login
 
@@ -18,12 +19,26 @@ flowchart TD
     gh_check -- Si --> gh_ok[Autenticado]:::done
     gh_check -- No --> gh_auth[gh auth login]:::install
     gh_auth --> gh_ok
+    gh_login -.-> gh_note["gh_login():
+    Verifica gh auth status.
+    Si no hay token valido,
+    ejecuta gh auth login."]:::note
 
     gh_ok --> dev_dir["Directorio de desarrollo"]:::prompt
+    dev_dir -.-> dev_note["dev_dir():
+    Lee DEVELOPER_DIR del perfil
+    o pregunta la ruta.
+    Crea el directorio
+    si no existe."]:::note
 
     dev_dir --> comp_sel["Que instalar?
     Gentle AI and Skills
     VSCode"]:::prompt
+    comp_sel -.-> comp_note["comp_sel():
+    Muestra checklist de
+    componentes a instalar.
+    Guarda la seleccion
+    en el perfil."]:::note
 
     comp_sel --> backup_check{Config opencode
     existe en
@@ -31,12 +46,23 @@ flowchart TD
     backup_check -- Si --> backup_prompt["Respaldar config existente?"]:::prompt
     backup_prompt --> backup_do[Respaldo en backups]:::install
     backup_check -- No --> skip_backup[Fresh install]:::skip
+    backup_check -.-> backup_note["backup():
+    Si existe config previa,
+    pregunta si respaldar.
+    Copia a backups/
+    con timestamp."]:::note
 
     backup_do --> install_phase
     skip_backup --> install_phase
 
     install_phase:::install --> ga_check{Gentle AI
     instalado?}:::check
+    install_phase -.-> install_note["install_phase():
+    Itera componentes
+    seleccionados.
+    Cada uno: verifica si
+    existe, si no descarga
+    e instala."]:::note
 
     ga_check -- Si --> ga_skip[Skip]:::skip
     ga_check -- No --> ga_install[Instalar Gentle AI]:::install
@@ -68,8 +94,21 @@ flowchart TD
 
     templates["Copiar templates de agente
     y generar opencode.json"]:::install
+    templates -.-> tpl_note["templates():
+    Copia templates/ de agente
+    desde el package.
+    Genera opencode.json con
+    skills paths y config
+    por defecto."]:::note
 
     templates --> repo_phase:::repo
+    repo_phase -.-> repo_note["repo_phase():
+    Crea repos privados en
+    GitHub si no existen
+    (engram-memories,
+    opencode-config).
+    Clona localmente o
+    hace pull si ya existen."]:::note
 
     repo_phase --> repo_engram_check{Repo
     engram-memories
@@ -102,15 +141,34 @@ flowchart TD
     de engram-memories]:::sync
     sync_engram --> sync_config[Ejecutar
     sync-opencode-config.sh]:::sync
+    sync_phase -.-> sync_note["sync():
+    Configura systemd timers
+    para sync automatico
+    cada 30 min.
+    Ejecuta sync.sh de
+    ambos repos."]:::note
 
     sync_config --> verify["Verificar instalacion:
     Engram en PATH?
     systemd timers activos?
     Repos clonados?"]:::check
+    verify -.-> verify_note["verify_installation():
+    Verifica engran en PATH,
+    gh auth valido,
+    timers systemd activos,
+    repos clonados.
+    Reporta errores
+    sin detener."]:::note
 
     verify --> check_profile{Perfil de Lara
     ya guardado en
     opencode-config?}:::check
+    check_profile -.-> profile_note["has_user_profile():
+    Busca perfil primero en
+    opencode-config/ (sync),
+    luego en .config/lara-diaries/.
+    Si existe en algun lado,
+    salta toda la config."]:::note
 
     check_profile -- Si --> personal_skip["Saltar configuracion
     (usar perfil existente)"]:::skip
@@ -128,6 +186,14 @@ flowchart TD
     assistance --> save_profile["Guardar perfil
     y sincronizar a
     opencode-config"]:::personal
+    config_phase -.-> config_note["config():
+    Solo se ejecuta si NO
+    hay perfil existente.
+    Pregunta modo repos,
+    estilo, tipo de PC,
+    pronombres, nivel.
+    Guarda perfil y lo
+    pushea a opencode-config."]:::note
 
     personal_skip --> summary
     save_profile --> summary
