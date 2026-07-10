@@ -55,6 +55,22 @@ OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 LARA_DIR="$HOME/.config/lara-diaries"
 
 # =============================================================================
+# git_commit_config — commit and push opencode-config changes
+# =============================================================================
+git_commit_config() {
+    local message="${1:-config: update opencode settings}"
+    if [[ ! -d "$OPENCODE_CONFIG_DIR/.git" ]]; then
+        return 0
+    fi
+    git -C "$OPENCODE_CONFIG_DIR" add -A 2>/dev/null || true
+    if git -C "$OPENCODE_CONFIG_DIR" diff --cached --quiet 2>/dev/null; then
+        return 0  # nothing to commit
+    fi
+    git -C "$OPENCODE_CONFIG_DIR" commit -m "$message" 2>/dev/null || true
+    git -C "$OPENCODE_CONFIG_DIR" push 2>/dev/null || log_warn "Could not push config changes. Will retry on next sync."
+}
+
+# =============================================================================
 # 1. GitHub Login
 # =============================================================================
 github_login() {
@@ -1078,26 +1094,40 @@ setup_github_repos() {
         fi
     done
 
-    log_info "Cloning repositories..."
-    for repo in "engram-memories" "opencode-config"; do
-        if [[ ! -d "$HOME/$repo" ]]; then
-            if gh repo clone "$GITHUB_USER/$repo" "$HOME/$repo" 2>/dev/null; then
-                log_info "Cloned: $HOME/$repo"
-                # Copy engram-memories .gitignore template if present
-                if [[ "$repo" == "engram-memories" && -f "$templates_dir/engram/gitignore" && ! -f "$HOME/$repo/.gitignore" ]]; then
-                    cp "$templates_dir/engram/gitignore" "$HOME/$repo/.gitignore"
-                    (cd "$HOME/$repo" && git add .gitignore && git commit -m "init: add .gitignore for sync chunks" && git push 2>/dev/null) || true
-                    log_info "  → .gitignore template applied"
-                fi
-            else
-                log_warn "Could not clone $repo. Creating local directory..."
-                mkdir -p "$HOME/$repo"
-                git init "$HOME/$repo"
+    # Define clone targets: engram-memories stays at $HOME, opencode-config clones to config dir
+    local engram_target="$HOME/engram-memories"
+    local config_target="$OPENCODE_CONFIG_DIR"
+
+    # engram-memories — clone to home directory
+    if [[ ! -d "$engram_target" ]]; then
+        if gh repo clone "$GITHUB_USER/engram-memories" "$engram_target" 2>/dev/null; then
+            log_info "Cloned: $engram_target"
+            if [[ -f "$templates_dir/engram/gitignore" && ! -f "$engram_target/.gitignore" ]]; then
+                cp "$templates_dir/engram/gitignore" "$engram_target/.gitignore"
+                (cd "$engram_target" && git add .gitignore && git commit -m "init: add .gitignore for sync chunks" && git push 2>/dev/null) || true
+                log_info "  → .gitignore template applied"
             fi
         else
-            log_info "Already exists: $HOME/$repo"
+            log_warn "Could not clone engram-memories. Creating local directory..."
+            mkdir -p "$engram_target"
+            git init "$engram_target"
         fi
-    done
+    else
+        log_info "Already exists: $engram_target"
+    fi
+
+    # opencode-config — clone to config dir ($OPENCODE_CONFIG_DIR)
+    if [[ ! -d "$config_target/.git" ]]; then
+        local config_backup="$HOME/.config/opencode.bak.$(date '+%Y%m%d%H%M%S')"
+        if gh repo clone "$GITHUB_USER/opencode-config" "$config_target" 2>/dev/null; then
+            log_info "Cloned: $config_target"
+        else
+            log_warn "Could not clone opencode-config. The config directory will not be version-controlled."
+            log_warn "You can set it up later: cd $config_target && git init && git remote add origin git@github.com:$GITHUB_USER/opencode-config.git"
+        fi
+    else
+        log_info "Repo already initialized: $config_target"
+    fi
 }
 
 # =============================================================================
@@ -1183,28 +1213,11 @@ backup_config() {
 }
 
 # =============================================================================
-# backup_initial_config — back up opencode config to opencode-config repo
+# backup_initial_config — commit current config state to git
 # =============================================================================
 backup_initial_config() {
-    log_info "Performing initial config backup..."
-    if [[ ! -d "$HOME/opencode-config" ]]; then
-        return 0
-    fi
-    if [[ -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
-        cp "$OPENCODE_CONFIG_DIR/opencode.json" "$HOME/opencode-config/" 2>/dev/null || true
-    fi
-    if [[ -f "$OPENCODE_CONFIG_DIR/AGENTS.md" ]]; then
-        cp "$OPENCODE_CONFIG_DIR/AGENTS.md" "$HOME/opencode-config/" 2>/dev/null || true
-    fi
-    mkdir -p "$HOME/opencode-config/agents"
-    cp "$OPENCODE_CONFIG_DIR/agents/"*.md "$HOME/opencode-config/agents/" 2>/dev/null || true
-
-    cd "$HOME/opencode-config"
-    if [[ -n "$(git status --porcelain)" ]]; then
-        git add .
-        git commit -m "backup: initial config $(date '+%Y-%m-%d')" 2>/dev/null || true
-        git push 2>/dev/null || log_warn "Could not push initial backup. Will retry on sync."
-    fi
+    log_info "Saving current config state..."
+    git_commit_config "backup: initial config $(date '+%Y-%m-%d')"
 }
 
 # =============================================================================
@@ -1504,17 +1517,17 @@ show_summary() {
 
 # =============================================================================
 # has_user_profile — check if user already configured Lara profile
-# Checks opencode-config repo first (persisted across machines), then local
+# Checks opencode config dir first (synced via git), then local fallback
 # =============================================================================
 has_user_profile() {
-    # Priority 1: profile synced to opencode-config repo
-    local config_repo_profile="$HOME/opencode-config/config/lara-diaries/user-profile.json"
+    # Priority 1: profile synced via opencode-config repo (persists across devices)
+    local config_repo_profile="$OPENCODE_CONFIG_DIR/lara-diaries/user-profile.json"
     if [[ -f "$config_repo_profile" ]]; then
-        log_info "Profile found in opencode-config (synced from another device)."
+        log_info "Profile found in opencode config (synced via git)."
         return 0
     fi
 
-    # Priority 2: local profile
+    # Priority 2: local profile only
     if [[ -f "$LARA_DIR/user-profile.json" ]]; then
         log_info "Profile found locally: $LARA_DIR/user-profile.json"
         return 0
@@ -1564,10 +1577,10 @@ verify_installation() {
         log_warn "Repo engram-memories not cloned."
         all_ok=false
     fi
-    if [[ -d "$HOME/opencode-config/.git" ]]; then
-        log_info "Repo opencode-config: cloned"
+    if [[ -d "$OPENCODE_CONFIG_DIR/.git" ]]; then
+        log_info "Repo opencode-config: tracked (config dir is git repo)"
     else
-        log_warn "Repo opencode-config not cloned."
+        log_warn "Config directory is not a git repository."
         all_ok=false
     fi
 
@@ -1598,7 +1611,7 @@ verify_installation() {
 }
 
 # =============================================================================
-# 11. Save User Profile (local + opencode-config)
+# 11. Save User Profile (local + synced via git)
 # =============================================================================
 save_user_profile() {
     mkdir -p "$LARA_DIR"
@@ -1627,18 +1640,12 @@ JSONEOF
 
     log_info "User profile saved: $LARA_DIR/user-profile.json"
 
-    # Also save to opencode-config repo if cloned (persists across devices)
-    local config_repo_dir="$HOME/opencode-config"
-    if [[ -d "$config_repo_dir/.git" ]]; then
-        local config_profile_dir="$config_repo_dir/config/lara-diaries"
-        mkdir -p "$config_profile_dir"
-        cp "$LARA_DIR/user-profile.json" "$config_profile_dir/user-profile.json"
-        (cd "$config_repo_dir" && \
-         git add config/lara-diaries/user-profile.json && \
-         git commit -m "profile: save Lara user profile" 2>/dev/null && \
-         git push 2>/dev/null) || true
-        log_info "Profile synced to opencode-config repo."
-    fi
+    # Also save to opencode config dir (synced via git across devices)
+    local config_profile_dir="$OPENCODE_CONFIG_DIR/lara-diaries"
+    mkdir -p "$config_profile_dir"
+    cp "$LARA_DIR/user-profile.json" "$config_profile_dir/user-profile.json"
+    git_commit_config "profile: save Lara user profile"
+    log_info "Profile synced to opencode config (git)."
 }
 
 # =============================================================================
