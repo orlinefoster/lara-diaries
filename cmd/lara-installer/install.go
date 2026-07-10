@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// wizardCorePath returns the path to wizard-core.sh relative to the binary,
-// or falls back to well-known locations.
+// wizardCorePath returns the path to wizard-core.sh (Unix) or wizard-core.ps1 (Windows)
+// relative to the binary, or falls back to well-known locations.
 func wizardCorePath() (string, error) {
 	// If running from bootstrap, bootstrap passes LARA_WIZARD_CORE
 	if p := os.Getenv("LARA_WIZARD_CORE"); p != "" {
@@ -20,18 +20,23 @@ func wizardCorePath() (string, error) {
 		}
 	}
 
+	coreName := "wizard-core.sh"
+	if runtime.GOOS == "windows" {
+		coreName = "wizard-core.ps1"
+	}
+
 	// Relative to the binary (release layout: bin/lara-installer)
 	exe, err := os.Executable()
 	if err == nil {
-		// Try: <binary>/../../modules/wizard-core.sh
+		// Try: <binary>/../../modules/wizard-core.{sh,ps1}
 		base := filepath.Dir(filepath.Dir(filepath.Dir(exe)))
 		candidates := []string{
-			filepath.Join(base, "modules", "wizard-core.sh"),
-			filepath.Join(base, "lara-diaries", "modules", "wizard-core.sh"),
+			filepath.Join(base, "modules", coreName),
+			filepath.Join(base, "lara-diaries", "modules", coreName),
 		}
 		if home, _ := os.UserHomeDir(); home != "" {
 			candidates = append(candidates,
-				filepath.Join(home, "lara-diaries", "modules", "wizard-core.sh"),
+				filepath.Join(home, "lara-diaries", "modules", coreName),
 			)
 		}
 		for _, p := range candidates {
@@ -41,27 +46,34 @@ func wizardCorePath() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("wizard-core.sh not found")
+	return "", fmt.Errorf("%s not found", coreName)
 }
 
 // shellOut calls run_go_step from wizard-core.sh, piping stdout/stderr.
 // Uses argument passing instead of string interpolation to prevent shell injection.
 func shellOut(wizardPath, stepName, jsonConfig string) error {
 	var cmd *exec.Cmd
+
+	// Prepare environment with optional JSON config
+	env := os.Environ()
+	if jsonConfig != "" {
+		env = append(env, "LARA_JSON_CONFIG="+jsonConfig)
+	}
+
 	if runtime.GOOS == "windows" {
-		// On Windows, the Go binary can't source wizard-core.sh (Bash).
-		// The proper entry point is bootstrap.ps1.
-		fmt.Fprintln(os.Stderr, "  [!] On Windows, please use bootstrap.ps1 instead of lara-installer.")
-		fmt.Fprintln(os.Stderr, "  [!] The lara-installer binary requires wizard-core.sh (Unix).")
-		return fmt.Errorf("wizard-core.sh bridge not available on Windows without WSL")
+		// Windows: shell out to PowerShell — call Run-GoStep from wizard-core.ps1
+		// The wizardPath on Windows points to wizard-core.ps1
+		psCmd := ". \"" + wizardPath + "\"; Run-GoStep -StepName '" + stepName + "'"
+		if jsonConfig != "" {
+			psCmd = "$env:LARA_JSON_CONFIG='" + jsonConfig + "'; " + psCmd
+		}
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psCmd)
 	} else {
 		// Unix: pass path as $1 to bash -s to avoid injection in -c string
 		cmd = exec.Command("bash", "-s", "--", wizardPath)
 		cmd.Stdin = strings.NewReader("source \"$1\" && run_go_step '" + stepName + "'")
 	}
-	if jsonConfig != "" {
-		cmd.Env = append(os.Environ(), "LARA_JSON_CONFIG="+jsonConfig)
-	}
+	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -171,6 +183,51 @@ var installSteps = []installStep{
 			for _, ext := range extensions {
 				rollbackShell("uninstall "+ext, "code --uninstall-extension '"+ext+"' 2>/dev/null; true")
 			}
+		},
+	},
+	{
+		Name: "setup_repo_management",
+		Run: func(wizardPath, jsonConfig string) error {
+			return shellOut(wizardPath, "setup_repo_management", jsonConfig)
+		},
+		Rollback: func() {
+			// No rollback — preference is stored in user profile
+		},
+	},
+	{
+		Name: "setup_design",
+		Run: func(wizardPath, jsonConfig string) error {
+			return shellOut(wizardPath, "setup_design", jsonConfig)
+		},
+		Rollback: func() {
+			// No rollback — preference is stored in user profile
+		},
+	},
+	{
+		Name: "setup_mission",
+		Run: func(wizardPath, jsonConfig string) error {
+			return shellOut(wizardPath, "setup_mission", jsonConfig)
+		},
+		Rollback: func() {
+			// No rollback — preference is stored in user profile
+		},
+	},
+	{
+		Name: "setup_recognition",
+		Run: func(wizardPath, jsonConfig string) error {
+			return shellOut(wizardPath, "setup_recognition", jsonConfig)
+		},
+		Rollback: func() {
+			// No rollback — preference is stored in user profile
+		},
+	},
+	{
+		Name: "setup_save_profile",
+		Run: func(wizardPath, jsonConfig string) error {
+			return shellOut(wizardPath, "setup_save_profile", jsonConfig)
+		},
+		Rollback: func() {
+			// No rollback — profile is git-committed, safe
 		},
 	},
 }
@@ -398,6 +455,11 @@ func standaloneRun(stepName string) error {
 			cmd.Stderr = os.Stderr
 			_ = cmd.Run()
 		}
+		return nil
+	case "setup_repo_management", "setup_design", "setup_mission", "setup_recognition", "setup_save_profile":
+		fmt.Println("  [..] Personalization step:", stepName)
+		fmt.Println("  [..] Run from the full lara-diaries repo for full personalization.")
+		fmt.Println("  [..] Using default values.")
 		return nil
 	default:
 		return fmt.Errorf("unknown step: %s", stepName)

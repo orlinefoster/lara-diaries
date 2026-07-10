@@ -188,8 +188,31 @@ fallback_wizard() {
 # file is available from the release server.
 
 # --- MAIN ---
-# Flags not supported by Go binary yet → skip to fallback
-if [[ "$CHECK_ONLY" == "true" || "$DRY_RUN" == "true" || -n "$NON_INTERACTIVE" ]]; then
+
+# --check and --dry-run always go to shell fallback (Go binary has no dedicated subcommand for these)
+if [[ "$CHECK_ONLY" == "true" || "$DRY_RUN" == "true" ]]; then
+    fallback_wizard
+    exit $?
+fi
+
+# --non-interactive: try Go binary first with --config, fallback to wizard-core
+if [[ -n "$NON_INTERACTIVE" ]]; then
+    # If Go binary exists, write config to temp file and delegate
+    if [[ -x "$BINARY_PATH" ]]; then
+        local config_file=""
+        # Detect if NON_INTERACTIVE is inline JSON or file path
+        if [[ "${NON_INTERACTIVE:0:1}" == "{" ]]; then
+            config_file="$(mktemp)"
+            printf '%s\n' "$NON_INTERACTIVE" > "$config_file"
+            trap 'rm -f "$config_file"' EXIT
+            echo -e "${GREEN}[OK]${RESET} Using lara-installer with inline config..."
+            exec "$BINARY_PATH" install --config "$config_file"
+        elif [[ -f "$NON_INTERACTIVE" ]]; then
+            echo -e "${GREEN}[OK]${RESET} Using lara-installer with config file..."
+            exec "$BINARY_PATH" install --config "$NON_INTERACTIVE"
+        fi
+    fi
+    # Fallback: use shell wizard
     fallback_wizard
     exit $?
 fi

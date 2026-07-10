@@ -38,17 +38,18 @@ Report to user: "Estás en {Windows/Linux}. Perfecto, voy a configurar todo para
 |------|-----|-------------|
 | `git` | Clone repos, sync | `git --version` |
 | `gh` | GitHub auth, repo mgmt | `gh --version` |
-| `node` | opencode runtime | `node --version` |
 
 For each missing tool:
 - **Windows**: Suggest winget or download link
 - **Linux**: Suggest apt/pacman/dnf command
 - Ask user permission before installing
 
+> 💡 opencode 2.x+ incluye su propio Node.js. No hace falta instalarlo aparte.
+
 If opencode itself isn't installed yet, guide the user to:
 ```
-Windows: winget install OpenCode
-Linux:   curl -fsSL https://opencode.ai/install.sh | sh
+Windows: winget install SST.opencode
+Linux:   curl -fsSL https://opencode.ai/install | bash
 ```
 Then say "Volve a ejecutar este mismo comando cuando hayas instalado opencode."
 
@@ -68,7 +69,7 @@ Check what's already installed:
 
 **Windows:**
 ```powershell
-.\bootstrap\bootstrap.ps1 -Check
+.\bootstrap\bootstrap.ps1 --check
 ```
 
 **Linux:**

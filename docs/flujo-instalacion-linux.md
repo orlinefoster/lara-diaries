@@ -135,14 +135,14 @@ flowchart TD
     repo_opencode_pull --> sync_phase
     repo_opencode_clone --> sync_phase
 
-    sync_phase:::sync --> sync_setup["Configurar systemd user timers
+    sync_phase:::sync -->     sync_setup["Configurar crontab / systemd timers
     cada 30 min"]:::sync
     sync_setup --> sync_engram[Ejecutar sync.sh
     de engram-memories]:::sync
     sync_engram --> sync_config[Ejecutar
     sync-opencode-config.sh]:::sync
     sync_phase -.-> sync_note["sync():
-    Configura systemd timers
+    Configura crontab
     para sync automatico
     cada 30 min.
     Ejecuta sync.sh de
@@ -155,7 +155,7 @@ flowchart TD
     verify -.-> verify_note["verify_installation():
     Verifica engran en PATH,
     gh auth valido,
-    timers systemd activos,
+    cron / timers activos,
     repos clonados.
     Reporta errores
     sin detener."]:::note
