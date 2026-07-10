@@ -1544,9 +1544,9 @@ show_summary() {
     printf "%-28s %s\n" "Gentleman Skills"  "${INSTALL_SKILLS:-false}"
     printf "%-28s %s\n" "VSCode"            "${INSTALL_VSCODE:-false}"
     printf "%-28s %s\n" "GGA (code review)" "${INSTALL_GGA:-false}"
-    printf "%-28s %s\n" "Pronouns"          "$PRONOUN"
-    printf "%-28s %s\n" "Skill Level"       "$SKILL_LEVEL"
-    printf "%-28s %s\n" "Assistance Mode"   "$ASSISTANCE_MODE"
+    printf "%-28s %s\n" "Pronouns"          "${PRONOUN:-(from existing profile)}"
+    printf "%-28s %s\n" "Skill Level"       "${SKILL_LEVEL:-(from existing profile)}"
+    printf "%-28s %s\n" "Assistance Mode"   "${ASSISTANCE_MODE:-(from existing profile)}"
     printf "%-28s %s\n" "Repo Management"   "$REPO_MANAGEMENT"
     printf "%-28s %s\n" "Use Design Doc"    "$USE_DESIGN_DOC"
     printf "%-28s %s\n" "Style"             "$STYLE"
@@ -1559,18 +1559,116 @@ show_summary() {
 }
 
 # =============================================================================
-# 11. Save User Profile
+# has_user_profile — check if user already configured Lara profile
+# Checks opencode-config repo first (persisted across machines), then local
+# =============================================================================
+has_user_profile() {
+    # Priority 1: profile synced to opencode-config repo
+    local config_repo_profile="$HOME/opencode-config/config/lara-diaries/user-profile.json"
+    if [[ -f "$config_repo_profile" ]]; then
+        log_info "Profile found in opencode-config (synced from another device)."
+        return 0
+    fi
+
+    # Priority 2: local profile
+    if [[ -f "$LARA_DIR/user-profile.json" ]]; then
+        log_info "Profile found locally: $LARA_DIR/user-profile.json"
+        return 0
+    fi
+
+    return 1
+}
+
+# =============================================================================
+# verify_installation — verify everything works before personalization
+# =============================================================================
+verify_installation() {
+    log_title ""
+    log_title "🔍 Post-Install Verification"
+    echo "────────────────────────────────────────"
+    echo ""
+    local all_ok=true
+
+    # 1. Engram
+    if command -v engram &>/dev/null; then
+        log_info "Engram: $(engram --version 2>/dev/null || echo 'installed')"
+    else
+        log_warn "Engram not found in PATH."
+        all_ok=false
+    fi
+
+    # 2. Gentle AI
+    if command -v gentle-ai &>/dev/null; then
+        log_info "Gentle AI: $(gentle-ai version 2>/dev/null || echo 'installed')"
+    else
+        log_warn "Gentle AI not found in PATH."
+        all_ok=false
+    fi
+
+    # 3. GitHub auth
+    if gh auth status &>/dev/null; then
+        log_info "GitHub: authenticated as $(gh api user --jq .login 2>/dev/null || echo 'yes')"
+    else
+        log_warn "GitHub not authenticated."
+        all_ok=false
+    fi
+
+    # 4. Repos
+    if [[ -d "$HOME/engram-memories/.git" ]]; then
+        log_info "Repo engram-memories: cloned"
+    else
+        log_warn "Repo engram-memories not cloned."
+        all_ok=false
+    fi
+    if [[ -d "$HOME/opencode-config/.git" ]]; then
+        log_info "Repo opencode-config: cloned"
+    else
+        log_warn "Repo opencode-config not cloned."
+        all_ok=false
+    fi
+
+    # 5. Cron / systemd timers
+    if crontab -l 2>/dev/null | grep -q "lara-sync"; then
+        log_info "Cron: configured for memory sync"
+    elif systemctl --user list-timers --all 2>/dev/null | grep -q "lara-sync"; then
+        log_info "Systemd timers: configured for memory sync"
+    else
+        log_warn "No auto-sync configured (cron or systemd timer)."
+        # Not a hard failure — user may set it up later
+    fi
+
+    # 6. Sync script
+    if [[ -f "$HOME/lara-sync/sync-memories.sh" ]]; then
+        log_info "Sync script: present"
+    else
+        log_warn "Sync script not found."
+        all_ok=false
+    fi
+
+    echo ""
+    if [[ "$all_ok" == "true" ]]; then
+        log_info "All systems operational. ✓"
+    else
+        log_warn "Some checks failed — review warnings above."
+    fi
+}
+
+# =============================================================================
+# 11. Save User Profile (local + opencode-config)
 # =============================================================================
 save_user_profile() {
     mkdir -p "$LARA_DIR"
 
+    local timestamp
+    timestamp="$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')"
+
     cat > "$LARA_DIR/user-profile.json" << JSONEOF
 {
   "version": "1.0.0",
-  "created_at": "$(date -Iseconds 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z')",
+  "created_at": "$timestamp",
   "github_user": "$GITHUB_USER",
   "dev_directory": "$DEV_DIR",
-  "gentle_ai": $INSTALL_GENTLE_AI,
+  "gentle_ai": ${INSTALL_GENTLE_AI:-false},
   "gentleman_skills": ${INSTALL_SKILLS:-false},
   "vscode": ${INSTALL_VSCODE:-false},
   "gga": ${INSTALL_GGA:-false},
@@ -1578,13 +1676,26 @@ save_user_profile() {
   "skill_level": "$SKILL_LEVEL",
   "assistance_mode": "$ASSISTANCE_MODE",
   "repo_management": "$REPO_MANAGEMENT",
-  "use_design_doc": $USE_DESIGN_DOC,
+  "use_design_doc": ${USE_DESIGN_DOC:-false},
   "style": "$STYLE",
   "mission": "$MISSION"
 }
 JSONEOF
 
     log_info "User profile saved: $LARA_DIR/user-profile.json"
+
+    # Also save to opencode-config repo if cloned (persists across devices)
+    local config_repo_dir="$HOME/opencode-config"
+    if [[ -d "$config_repo_dir/.git" ]]; then
+        local config_profile_dir="$config_repo_dir/config/lara-diaries"
+        mkdir -p "$config_profile_dir"
+        cp "$LARA_DIR/user-profile.json" "$config_profile_dir/user-profile.json"
+        (cd "$config_repo_dir" && \
+         git add config/lara-diaries/user-profile.json && \
+         git commit -m "profile: save Lara user profile" 2>/dev/null && \
+         git push 2>/dev/null) || true
+        log_info "Profile synced to opencode-config repo."
+    fi
 }
 
 # =============================================================================
@@ -1681,15 +1792,23 @@ wizard_noninteractive() {
     log_info "Config loaded. Starting installation..."
 
     # Run install steps
-    log_info "[1/3] Installing components..."
+    log_info "[1/5] Installing components..."
     install_components
 
-    log_info "[2/3] Setting up sync..."
+    log_info "[2/5] Setting up sync..."
     setup_sync
 
-    log_info "[3/3] Saving profile..."
-    save_user_profile
+    log_info "[3/5] Verifying installation..."
+    verify_installation
 
+    log_info "[4/5] Configuring Lara profile..."
+    if has_user_profile; then
+        log_info "Profile already exists — skipping personalization."
+    else
+        save_user_profile
+    fi
+
+    log_info "[5/5] Complete!"
     show_summary
 }
 
@@ -1710,18 +1829,26 @@ wizard_main() {
         lara_state_init "fresh"
     fi
 
-    wizard_run_step "github_login"       "GitHub Login"          github_login
-    wizard_run_step "dev_directory"      "Developer Directory"   dev_directory_prompt
-    wizard_run_step "gentle_ai"          "Gentle AI"             gentle_ai_prompt
-    wizard_run_step "recognition"        "Recognition Questions" recognition_questions
-    wizard_run_step "repo_management"    "Repo Management"       repo_management_prompt
-    wizard_run_step "design_orientation" "Design & Style"        design_orientation_prompt
-    wizard_run_step "mission"            "Mission"               mission_prompt
-    wizard_run_step "backup"             "Backup Config"         backup_config
-    wizard_run_step "install_components" "Install Components"    install_components
-    wizard_run_step "setup_sync"         "Setup Sync"            setup_sync
-    wizard_run_step "save_profile"       "Save Profile"          save_user_profile
-    wizard_run_step "show_summary"       "Show Summary"          show_summary
+    wizard_run_step "github_login"       "GitHub Login"             github_login
+    wizard_run_step "dev_directory"      "Developer Directory"      dev_directory_prompt
+    wizard_run_step "gentle_ai"          "Gentle AI"                gentle_ai_prompt
+    wizard_run_step "repo_management"    "Repo Management"          repo_management_prompt
+    wizard_run_step "design_orientation" "Design & Style"           design_orientation_prompt
+    wizard_run_step "mission"            "Mission"                  mission_prompt
+    wizard_run_step "backup"             "Backup Config"            backup_config
+    wizard_run_step "install_components" "Install Components"       install_components
+    wizard_run_step "setup_sync"         "Setup Sync"               setup_sync
+    wizard_run_step "verify_install"     "Post-Install Verification" verify_installation
+
+    # Personalization at the very end — only if never configured before
+    if has_user_profile; then
+        log_info "Lara profile already configured — skipping personalization."
+    else
+        wizard_run_step "recognition"    "Recognition Questions"    recognition_questions
+        wizard_run_step "save_profile"   "Save Profile"             save_user_profile
+    fi
+
+    wizard_run_step "show_summary"       "Show Summary"             show_summary
 }
 
 # =============================================================================
@@ -1876,4 +2003,5 @@ run_go_step() {
 export -f wizard_main github_login dev_directory_prompt gentle_ai_prompt
 export -f recognition_questions repo_management_prompt design_orientation_prompt
 export -f mission_prompt install_components setup_sync show_summary save_user_profile
+export -f has_user_profile verify_installation
 export -f run_go_step

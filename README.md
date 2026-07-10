@@ -136,6 +136,25 @@ Borrás la carpeta `lara-diaries`, desinstalás opencode con `winget uninstall O
 
 ---
 
+## 🔄 Installation Flow
+
+> Diagramas de flujo del instalador — cómo Lara instala todo automáticamente cuando le pedís.
+
+| Sistema | Diagrama |
+|---------|----------|
+| **Linux** | [Ver diagrama →](docs/flujo-instalacion-linux.md) |
+| **Windows** | [Ver diagrama →](docs/flujo-instalacion-windows.md) |
+| **Lógica completa** | [Ver principios →](docs/flujo-instalacion-logica.md) |
+
+El flujo sigue este orden inmodificable:
+
+```
+1. Preguntar configuración → 2. Instalar componentes → 3. Clonar/crear repos
+→ 4. Configurar sync → 5. Verificar instalación → 6. Personalizar (solo si es primera vez)
+```
+
+---
+
 ## ⚙️ Installer Architecture
 
 The Lara Diaries installer uses a **two-phase hybrid** design:

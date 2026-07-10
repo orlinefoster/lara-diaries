@@ -435,7 +435,86 @@ function Invoke-MissionPrompt {
     Save-UserProfile
 }
 
-# ── SAVE USER PROFILE ────────────────────────
+# ── TEST USER PROFILE EXISTS ─────────────────
+function Test-UserProfileExists {
+    # Priority 1: profile synced to opencode-config repo
+    $configRepoProfile = Join-Path $HOME "opencode-config\config\lara-diaries\user-profile.json"
+    if (Test-Path -LiteralPath $configRepoProfile) {
+        Write-Info "Perfil encontrado en opencode-config (sincronizado desde otro dispositivo)."
+        return $true
+    }
+
+    # Priority 2: local profile
+    $localProfile = Join-Path $env:LOCALAPPDATA "lara-diaries\user-profile.json"
+    if (Test-Path -LiteralPath $localProfile) {
+        Write-Info "Perfil encontrado localmente."
+        return $true
+    }
+
+    return $false
+}
+
+# ── VERIFY INSTALLATION ─────────────────────
+function Invoke-VerifyInstallation {
+    Write-Host "`n  == Post-Install Verification" -ForegroundColor Magenta
+    Write-Host "  ----------------------------------------" -ForegroundColor DarkGray
+    $allOk = $true
+
+    # 1. Engram
+    if (Get-Command "engram" -ErrorAction SilentlyContinue) {
+        Write-Success "Engram: instalado"
+    } else {
+        Write-Warn "Engram no encontrado en PATH."
+        $allOk = $false
+    }
+
+    # 2. Gentle AI
+    if (Get-Command "gentle-ai" -ErrorAction SilentlyContinue) {
+        Write-Success "Gentle AI: instalado"
+    } else {
+        Write-Warn "Gentle AI no encontrado en PATH."
+        $allOk = $false
+    }
+
+    # 3. GitHub auth
+    $ghAuth = & gh auth status 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "GitHub: autenticado"
+    } else {
+        Write-Warn "GitHub no autenticado."
+        $allOk = $false
+    }
+
+    # 4. Repos
+    if (Test-Path -LiteralPath (Join-Path $HOME "engram-memories\.git")) {
+        Write-Success "Repo engram-memories: clonado"
+    } else {
+        Write-Warn "Repo engram-memories no clonado."
+        $allOk = $false
+    }
+    if (Test-Path -LiteralPath (Join-Path $HOME "opencode-config\.git")) {
+        Write-Success "Repo opencode-config: clonado"
+    } else {
+        Write-Warn "Repo opencode-config no clonado."
+        $allOk = $false
+    }
+
+    # 5. Scheduled tasks
+    $tasks = Get-ScheduledTask -TaskPath "\LaraDiaries\" -ErrorAction SilentlyContinue
+    if ($tasks) {
+        Write-Success "Scheduled Tasks: configurados"
+    } else {
+        Write-Warn "No se encontraron Scheduled Tasks de Lara."
+    }
+
+    if ($allOk) {
+        Write-Success "Todos los sistemas operacionales."
+    } else {
+        Write-Warn "Algunas verificaciones fallaron — revisar advertencias."
+    }
+}
+
+# ── SAVE USER PROFILE (local + opencode-config) ──
 function Save-UserProfile {
     $profileDir = Join-Path $env:LOCALAPPDATA "lara-diaries"
     if (-not (Test-Path -LiteralPath $profileDir)) {
@@ -463,6 +542,20 @@ function Save-UserProfile {
         $json = $profile | ConvertTo-Json -Compress
         $json | Set-Content -Path $profilePath -Encoding UTF8 -Force
         Write-Info "Perfil guardado en: $profilePath"
+
+        # Also save to opencode-config repo if cloned
+        $configRepoDir = Join-Path $HOME "opencode-config"
+        if (Test-Path -LiteralPath (Join-Path $configRepoDir ".git")) {
+            $configProfileDir = Join-Path $configRepoDir "config\lara-diaries"
+            $null = New-Item -ItemType Directory -Path $configProfileDir -Force
+            Copy-Item -Path $profilePath -Destination (Join-Path $configProfileDir "user-profile.json") -Force
+            Push-Location $configRepoDir
+            & git add "config/lara-diaries/user-profile.json"
+            & git commit -m "profile: save Lara user profile" 2>$null
+            & git push 2>$null
+            Pop-Location
+            Write-Info "Perfil sincronizado a opencode-config."
+        }
     } catch {
         Write-Warn "No se pudo guardar el perfil: $_"
     }
@@ -1485,21 +1578,24 @@ function Start-NonInteractiveWizard {
     }
 
     # Run install steps
-    Write-Host "`n  [1/4] Verificando repositorios GitHub..." -ForegroundColor Cyan
+    Write-Host "`n  [1/5] Instalando componentes..." -ForegroundColor Cyan
     Install-Components
 
-    Write-Host "`n  [2/4] Configurando sincronizacion..." -ForegroundColor Cyan
+    Write-Host "`n  [2/5] Configurando sincronizacion..." -ForegroundColor Cyan
     Setup-Sync
 
-    Write-Host "`n  [3/4] Guardando perfil..." -ForegroundColor Cyan
-    Save-UserProfile
+    Write-Host "`n  [3/5] Verificando instalacion..." -ForegroundColor Cyan
+    Invoke-VerifyInstallation
 
-    Write-Host "`n  [4/4] Mostrando resumen..." -ForegroundColor Cyan
+    Write-Host "`n  [4/5] Configurando perfil de Lara..." -ForegroundColor Cyan
+    if (Test-UserProfileExists) {
+        Write-Host "  [SKIP] Perfil ya existe — saltando personalizacion." -ForegroundColor Yellow
+    } else {
+        Save-UserProfile
+    }
+
+    Write-Host "`n  [5/5] Mostrando resumen..." -ForegroundColor Cyan
     Show-Summary
-
-    Write-Host "`n  [5/5] Verificacion post-instalacion (salteada en modo no interactivo)..." -ForegroundColor Cyan
-    Write-Host "  Para verificar, ejecuta: lara-diaries doctor" -ForegroundColor Yellow
-    Write-Host "  Para reconfigurar preferencias, ejecuta: .\bootstrap.ps1" -ForegroundColor Yellow
 }
 
 # ── MAIN WIZARD ORCHESTRATOR ──────────────────
@@ -1548,41 +1644,46 @@ function Start-Wizard {
             Set-Progress -Step 2 -Status "Gentle AI..."
             Invoke-GentleAIPrompt
         }
-        Run-Step -Name "recognition_questions" -Action {
-            Set-Progress -Step 3 -Status "Preferencias..."
-            Invoke-RecognitionQuestions
-        }
         Run-Step -Name "repo_management" -Action {
-            Set-Progress -Step 4 -Status "Repos..."
+            Set-Progress -Step 3 -Status "Repos..."
             Invoke-RepoManagementPrompt
         }
         Run-Step -Name "design_orientation" -Action {
-            Set-Progress -Step 5 -Status "Disenio..."
+            Set-Progress -Step 4 -Status "Disenio..."
             Invoke-DesignOrientationPrompt
         }
         Run-Step -Name "mission" -Action {
-            Set-Progress -Step 6 -Status "Mision..."
+            Set-Progress -Step 5 -Status "Mision..."
             Invoke-MissionPrompt
         }
         Run-Step -Name "backup" -Action {
-            Set-Progress -Step 7 -Status "Backup..."
+            Set-Progress -Step 6 -Status "Backup..."
             Invoke-BackupPrompt
         }
         Run-Step -Name "install_components" -Action {
-            Set-Progress -Step 8 -Status "Instalando..."
+            Set-Progress -Step 7 -Status "Instalando..."
             Install-Components
         }
         Run-Step -Name "setup_sync" -Action {
-            Set-Progress -Step 9 -Status "Sincronizacion..."
+            Set-Progress -Step 8 -Status "Sincronizacion..."
             Setup-Sync
         }
-        Run-Step -Name "show_summary" -Action {
-            Set-Progress -Step 10 -Status "Resumen..."
-            Show-Summary
+        Run-Step -Name "verify_install" -Action {
+            Set-Progress -Step 9 -Status "Verificacion..."
+            Invoke-VerifyInstallation
         }
-        Run-Step -Name "post_install_verification" -Action {
-            Set-Progress -Step 11 -Status "Verificacion..."
-            Invoke-PostInstallVerification
+        Run-Step -Name "recognition_questions" -Action {
+            if (Test-UserProfileExists) {
+                Write-Host "  [SKIP] Perfil ya existe — saltando personalizacion." -ForegroundColor DarkYellow
+            } else {
+                Set-Progress -Step 10 -Status "Preferencias..."
+                Invoke-RecognitionQuestions
+                Save-UserProfile
+            }
+        }
+        Run-Step -Name "show_summary" -Action {
+            Set-Progress -Step 11 -Status "Resumen..."
+            Show-Summary
         }
 
         Write-Progress -Activity "Lara Diaries" -Completed
